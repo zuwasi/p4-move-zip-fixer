@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Tool runtime artifacts
+moves.sqlite
+*.zip
+!docs/outreach/pdf/*.zip   # release artifacts are intentionally tracked
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

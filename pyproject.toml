@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "p4-move-zip-fixer"
+version = "0.1.0"
+description = "Auto-discover Perforce move/add ↔ move/delete pairs and generate a complete remote spec so 'p4 zip' succeeds without manual path enumeration."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Daniel" }]
+dependencies = [
+    "click>=8.1",
+    # p4python is the official Perforce Python API. It is optional at install
+    # time so tests can run with a mock; the CLI will error nicely if missing.
+    # "p4python>=2024.1",
+]
+
+[project.optional-dependencies]
+p4 = ["p4python>=2024.1"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+p4-move-zip-fixer = "p4_move_zip_fixer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

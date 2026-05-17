@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>p4-move-zip-fixer — Execution Plan (Today)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#101733; --panel:#161e3d; --panel2:#1d2750;
+    --ink:#e7ecff; --ink-dim:#a9b3d6; --muted:#7a86b8;
+    --accent:#5cc8ff; --accent2:#9d7bff; --ok:#3ddc84; --warn:#ffcc66; --bad:#ff6b6b;
+    --line:rgba(255,255,255,0.08); --code-bg:#0e1530;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden;height:100vh;width:100vw}
+  body{user-select:none;-webkit-user-select:none}
+  .deck{display:flex;height:100vh;width:100vw;transition:transform .55s cubic-bezier(.65,.05,.36,1);will-change:transform}
+  .slide{flex:0 0 100vw;height:100vh;padding:clamp(28px,4vw,72px) clamp(32px,5vw,96px);display:flex;flex-direction:column;justify-content:center;position:relative;background:radial-gradient(1200px 700px at 10% -10%,#1a2554 0%,transparent 60%),radial-gradient(900px 600px at 100% 110%,#231752 0%,transparent 55%),var(--bg)}
+  .slide h1{font-size:clamp(28px,3.6vw,56px);font-weight:800;margin:0 0 14px;letter-spacing:-.02em;line-height:1.05}
+  .slide h2{font-size:clamp(22px,2.4vw,36px);font-weight:700;margin:0 0 10px;letter-spacing:-.01em}
+  .slide h3{font-size:clamp(16px,1.4vw,22px);font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin:0 0 18px}
+  .slide p,.slide li{font-size:clamp(14px,1.15vw,18px);line-height:1.55;color:var(--ink-dim)}
+  .slide .lead{font-size:clamp(16px,1.4vw,22px);color:var(--ink);max-width:1100px}
+  .grid{display:grid;gap:clamp(16px,2vw,28px)}
+  .grid-2{grid-template-columns:1fr 1fr}
+  .grid-3{grid-template-columns:repeat(3,1fr)}
+  .grid-4{grid-template-columns:repeat(4,1fr)}
+  @media (max-width:900px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--panel) 0%,var(--panel2) 100%);border:1px solid var(--line);border-radius:14px;padding:clamp(16px,1.6vw,22px)}
+  .card .label{font-size:.78em;text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:600;margin:0 0 6px}
+  .card .num{font-size:clamp(28px,3.4vw,48px);font-weight:800;color:var(--ink);line-height:1}
+  .card .sub{color:var(--muted);font-size:.9em;margin-top:6px}
+  pre,code{font-family:'JetBrains Mono',Consolas,monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:14px 18px;font-size:clamp(11px,.95vw,15px);color:#d6e0ff;overflow:auto;line-height:1.5}
+  code.inline{background:rgba(92,200,255,.12);color:#bfe5ff;padding:2px 6px;border-radius:4px;font-size:.92em}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:rgba(92,200,255,.12);color:var(--accent);padding:4px 10px;border-radius:999px;font-size:.78em;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+  .pill.warn{background:rgba(255,204,102,.12);color:var(--warn)}
+  .pill.ok{background:rgba(61,220,132,.12);color:var(--ok)}
+  .pill.bad{background:rgba(255,107,107,.14);color:var(--bad)}
+  .ascii{font-family:'JetBrains Mono',Consolas,monospace;white-space:pre;background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:18px 20px;font-size:clamp(10px,.92vw,14px);color:#cfe2ff;line-height:1.4;overflow:auto}
+  .badge{display:inline-block;background:linear-gradient(90deg,var(--accent),var(--accent2));color:#0a0f24;padding:4px 12px;border-radius:6px;font-weight:700;font-size:.78em;letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px}
+  .badge.urgent{background:linear-gradient(90deg,#ff6b6b,#ffcc66)}
+  ul.tight{margin:6px 0 0 0;padding-left:18px}
+  ul.tight li{margin:4px 0}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:clamp(13px,1.05vw,16px)}
+  .kv .k{color:var(--muted);font-weight:500}
+  .kv .v{color:var(--ink)}
+  table{border-collapse:collapse;width:100%;font-size:clamp(12px,1vw,15px)}
+  th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;color:var(--ink-dim);vertical-align:top}
+  th{background:rgba(92,200,255,.08);color:var(--ink);font-weight:600}
+  td.ok{color:var(--ok);font-weight:600}
+  td.bad{color:var(--bad);font-weight:600}
+  td.warn{color:var(--warn);font-weight:600}
+  .nav{position:fixed;top:50%;transform:translateY(-50%);width:48px;height:48px;border-radius:50%;background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--ink);display:flex;align-items:center;justify-content:center;font-size:24px;cursor:pointer;z-index:50;transition:all .2s;backdrop-filter:blur(6px)}
+  .nav:hover{background:rgba(255,255,255,.14)}
+  .nav.left{left:18px}.nav.right{right:18px}
+  .nav.hidden{opacity:0;pointer-events:none}
+  .progress{position:fixed;left:0;right:0;bottom:0;height:4px;background:rgba(255,255,255,.06);z-index:40}
+  .progress .bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s ease;width:0%}
+  .counter{position:fixed;right:18px;bottom:14px;color:var(--ink-dim);font-size:.82em;background:rgba(0,0,0,.3);padding:4px 10px;border-radius:999px;z-index:40;font-variant-numeric:tabular-nums}
+  .swipe-hint{position:absolute;bottom:64px;left:50%;transform:translateX(-50%);color:var(--muted);font-size:.85em;animation:bob 2s ease-in-out infinite;letter-spacing:.05em}
+  @keyframes bob{0%,100%{transform:translateX(-50%) translateY(0);opacity:.7}50%{transform:translateX(-50%) translateY(-4px);opacity:1}}
+  .hide{display:none!important}
+  .flow{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:14px 0}
+  .step{background:linear-gradient(180deg,#1a2454,#1d2c66);border:1px solid var(--line);border-radius:12px;padding:14px 18px;min-width:160px;text-align:center}
+  .step .n{font-size:.72em;color:var(--accent);font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+  .step .t{font-size:1.05em;font-weight:600;color:var(--ink);margin-top:4px}
+  .step .d{font-size:.82em;color:var(--ink-dim);margin-top:4px}
+  .arrow{color:var(--accent);font-size:1.6em;font-weight:300}
+  .checklist li{position:relative;list-style:none;padding-left:30px;margin:10px 0}
+  .checklist li::before{content:"";position:absolute;left:0;top:4px;width:18px;height:18px;border:2px solid var(--accent);border-radius:4px;background:rgba(92,200,255,.06)}
+  .checklist li.done::before{content:"✓";color:#0a0f24;background:var(--accent);text-align:center;line-height:14px;font-weight:800;font-size:13px}
+  .risk-card{background:var(--panel);border-left:4px solid var(--warn);border-radius:8px;padding:14px 16px;margin:8px 0}
+  .risk-card.bad{border-left-color:var(--bad)}
+  .risk-card.ok{border-left-color:var(--ok)}
+  .risk-card .head{display:flex;gap:10px;align-items:center;margin-bottom:6px}
+  .risk-card .head .t{font-weight:700;color:var(--ink);font-size:1.02em;flex:1}
+  .risk-card .head .sev{font-size:.7em;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--warn);background:rgba(255,204,102,.14);padding:2px 8px;border-radius:999px}
+  .risk-card.bad .head .sev{color:var(--bad);background:rgba(255,107,107,.14)}
+  .risk-card.ok .head .sev{color:var(--ok);background:rgba(61,220,132,.14)}
+  .risk-card .desc{color:var(--ink-dim);font-size:.92em;margin-bottom:6px;line-height:1.4}
+  .risk-card .mit{font-size:.92em;line-height:1.45;color:var(--ink);background:rgba(61,220,132,.06);border-left:2px solid var(--ok);padding:6px 10px;border-radius:0 4px 4px 0;margin-top:6px}
+  .risk-card .mit b{color:var(--ok);text-transform:uppercase;letter-spacing:.08em;font-size:.82em;font-weight:700}
+  .timeline{position:relative;padding-left:28px;margin-top:18px}
+  .timeline::before{content:"";position:absolute;left:9px;top:6px;bottom:6px;width:2px;background:linear-gradient(180deg,var(--accent),var(--accent2))}
+  .tl-item{position:relative;margin:14px 0;padding-left:14px}
+  .tl-item::before{content:"";position:absolute;left:-23px;top:6px;width:14px;height:14px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px rgba(92,200,255,.15)}
+  .tl-item .when{color:var(--accent);font-weight:700;font-size:.82em;letter-spacing:.08em;text-transform:uppercase}
+  .tl-item .what{color:var(--ink);font-weight:600;font-size:1.02em;margin-top:2px}
+  .tl-item .det{color:var(--ink-dim);font-size:.92em;margin-top:2px}
+  .title-mega{font-size:clamp(40px,7vw,110px);font-weight:800;letter-spacing:-.04em;line-height:.95;background:linear-gradient(90deg,#5cc8ff,#9d7bff);-webkit-background-clip:text;background-clip:text;color:transparent;margin:0 0 18px}
+  .subtitle{font-size:clamp(18px,2vw,30px);color:var(--ink-dim);max-width:1000px;line-height:1.4}
+  .meta-line{margin-top:32px;color:var(--muted);font-size:.95em;letter-spacing:.06em}
+  .stat-strip{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px}
+  .stat-strip .st{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 16px;min-width:120px}
+  .stat-strip .st .v{font-size:1.6em;font-weight:800;color:var(--ink);line-height:1}
+  .stat-strip .st .l{font-size:.78em;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+<!-- 1. Title — execution -->
+<section class="slide">
+  <span class="badge urgent">Execution Plan · Start &amp; Finish Today</span>
+  <h1 class="title-mega">Default Depot Migration</h1>
+  <p class="subtitle">Self-managed workaround for the <code class="inline">p4 zip</code> partial-action bug. <strong>We do not wait for Perforce.</strong> When the official fix ships we will re-evaluate; today we ship.</p>
+  <div class="meta-line">Daniel Liezrowice · CTO · Engineering Software Lab Ltd. · Case 01565143 · v0.1.0</div>
+  <div class="swipe-hint" id="hint">← Swipe / arrow keys to navigate →</div>
+</section>
+
+<!-- 2. The decision -->
+<section class="slide">
+  <h3>The Decision</h3>
+  <h1>We own this migration. We finish it today.</h1>
+  <div class="grid grid-2" style="margin-top:18px">
+    <div>
+      <p class="lead">Perforce's manual workaround does not scale to 705k paths. The official enhancement has no committed date. Our depot consolidation has a business deadline.</p>
+      <p style="margin-top:14px">Conclusion: <strong>execute with our own tool</strong>, validate independently, document the run, and proceed with the next two depots on the same playbook.</p>
+      <div class="stat-strip">
+        <div class="st"><div class="v">2 / 3</div><div class="l">Depots remaining</div></div>
+        <div class="st"><div class="v">705k</div><div class="l">Paths in this one</div></div>
+        <div class="st"><div class="v">1 day</div><div class="l">Target window</div></div>
+      </div>
+    </div>
+    <div>
+      <h2>What this slide deck is</h2>
+      <ul class="tight">
+        <li>The <strong>execution plan</strong> for today's run</li>
+        <li>The <strong>risks we accept</strong> and how we mitigate each</li>
+        <li>The <strong>validation gates</strong> that prove correctness without Perforce sign-off</li>
+        <li>The <strong>rollback plan</strong> if anything goes wrong</li>
+      </ul>
+      <h2 style="margin-top:18px">What it is <em>not</em></h2>
+      <ul class="tight">
+        <li>A request for vendor approval</li>
+        <li>A replacement for the eventual official fix</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 3. The problem (concise) -->
+<section class="slide">
+  <h3>The Blocker</h3>
+  <h1><code class="inline">p4 zip</code> aborts on partial move actions</h1>
+  <div class="grid grid-2" style="margin-top:18px">
+    <div>
+      <p class="lead">When a changelist contains a <code class="inline">move/add</code> or <code class="inline">move/delete</code> whose counterpart sits outside the command's view, <code class="inline">p4 zip</code> stops with:</p>
+      <pre>"the parameters of this fetch, push, or zip
+ command include only part of the full action"</pre>
+      <p>The fix that works: ensure the remote spec covers <strong>both halves of every move</strong>. Doing that by hand at 705k paths is not feasible. We automate it.</p>
+    </div>
+    <div class="ascii">
+Changelist 142,857
+─────────────────────────────────
+ move/add    //depot/new/foo.c
+ move/delete //depot/old/foo.c   ← outside view ✗
+
+           ┌────────────────────┐
+           │  p4 zip            │
+           │  view = //depot/new│
+           └─────────┬──────────┘
+                     ▼
+           ╳ HALT — partial action
+    </div>
+  </div>
+</section>
+
+<!-- 4. Environment -->
+<section class="slide">
+  <h3>Environment</h3>
+  <h1>What we're moving today</h1>
+  <div class="grid grid-3" style="margin-top:18px">
+    <div class="card">
+      <p class="label">Source</p>
+      <div class="kv">
+        <div class="k">Server</div><div class="v"><code class="inline">illin2343</code></div>
+        <div class="k">Version</div><div class="v">P4D 2025.1/2831954</div>
+        <div class="k">Root</div><div class="v"><code class="inline">/p4/2/root</code></div>
+        <div class="k">Depot</div><div class="v"><code class="inline">/p4/2/depots/depot/...</code></div>
+        <div class="k">Since</div><div class="v">2013-12-21</div>
+      </div>
+    </div>
+    <div class="card">
+      <p class="label">Destination</p>
+      <div class="kv">
+        <div class="k">Server</div><div class="v"><code class="inline">p4jirastg22</code></div>
+        <div class="k">Version</div><div class="v">P4D 2025.1/2831954</div>
+        <div class="k">Root</div><div class="v"><code class="inline">/p4/1/root</code></div>
+        <div class="k">Case</div><div class="v">sensitive (matches)</div>
+        <div class="k">TZ</div><div class="v">+0300 IDT</div>
+      </div>
+    </div>
+    <div class="card">
+      <p class="label">Tool</p>
+      <div class="kv">
+        <div class="k">Name</div><div class="v"><code class="inline">p4-move-zip-fixer</code></div>
+        <div class="k">Version</div><div class="v">0.1.0</div>
+        <div class="k">License</div><div class="v">MIT</div>
+        <div class="k">Tests</div><div class="v">16 / 16 ✓</div>
+        <div class="k">LoC</div><div class="v">~400</div>
+      </div>
+    </div>
+  </div>
+  <p style="margin-top:18px"><span class="pill ok">Already migrated</span> <code class="inline">//CRM_depot/...</code> (clean run) &nbsp; <span class="pill warn">Today</span> Default depot &nbsp; <span class="pill">Next</span> third depot — same playbook</p>
+</section>
+
+<!-- 5. Solution architecture -->
+<section class="slide">
+  <h3>Solution</h3>
+  <h1>Three commands. One zip. Done.</h1>
+  <div class="ascii" style="margin-top:18px">
+╭──────────────╮   ╭────────────────────╮   ╭──────────────────╮   ╭──────────╮
+│ Source depot │──▶│ scan: p4 filelog   │──▶│ build-spec:      │──▶│ p4 zip   │
+│ 705k paths   │   │ -ztag (parallel,   │   │ generate remote  │   │ succeeds │
+│              │   │ resumable, SQLite) │   │ spec covering    │   │          │
+╰──────────────╯   ╰─────────┬──────────╯   │ both sides of    │   ╰──────────╯
+                             │              │ every move       │
+                             ▼              ╰──────────────────╯
+                    ╭────────────────╮
+                    │ moves.sqlite   │  ← resumable cache (idempotent)
+                    │ (src,tgt,chg)  │
+                    ╰────────────────╯
+  </div>
+  <pre style="margin-top:14px">$ p4-move-zip-fixer scan        --depot //depot/... --db moves.sqlite --head &lt;HEAD&gt; --workers 4
+$ p4-move-zip-fixer build-spec  --db moves.sqlite --remote migration-remote
+$ p4-move-zip-fixer zip         --remote migration-remote --output default-depot.zip</pre>
+</section>
+
+<!-- 6. Today's timeline -->
+<section class="slide">
+  <h3>Today's Timeline</h3>
+  <h1>Start &amp; finish in one working day</h1>
+  <div class="timeline">
+    <div class="tl-item"><div class="when">T+00:00 · Pre-flight</div><div class="what">Snapshot the source depot &amp; record current head changelist</div><div class="det"><code class="inline">p4 counter change</code> · backup verified · workstation provisioned · <code class="inline">p4 login</code> OK</div></div>
+    <div class="tl-item"><div class="when">T+00:30 · Scan</div><div class="what">Run <code class="inline">scan</code> against <code class="inline">//depot/...</code> with 4 workers</div><div class="det">Read-only, off-peak window. Expected duration: 1–3 hours for 705k paths. Resumable.</div></div>
+    <div class="tl-item"><div class="when">T+03:30 · Build spec</div><div class="what">Generate <code class="inline">migration-remote</code> from SQLite cache</div><div class="det">Single <code class="inline">p4 save_remote</code> call. Expected: seconds to a minute.</div></div>
+    <div class="tl-item"><div class="when">T+03:35 · Validation gate #1</div><div class="what">Sanity-check the spec before any zip</div><div class="det">Compare path count vs. <code class="inline">p4 files</code> count · diff against last known-good spec · review 100 random pairs.</div></div>
+    <div class="tl-item"><div class="when">T+04:00 · Zip</div><div class="what">Execute <code class="inline">p4 zip</code> against the spec</div><div class="det">If failure: tool prints failed changelists → re-scan that range → rebuild → retry. Loop until clean.</div></div>
+    <div class="tl-item"><div class="when">T+06:00 · Transfer + unzip</div><div class="what">Ship <code class="inline">default-depot.zip</code> to <code class="inline">p4jirastg22</code> &amp; <code class="inline">p4 unzip</code></div><div class="det">Validation gate #2: <code class="inline">p4 verify -q //depot/...</code> on destination · revision count parity.</div></div>
+    <div class="tl-item"><div class="when">T+08:00 · Validation gate #3 · GO/NO-GO</div><div class="what">Independent diff between source and destination</div><div class="det">If clean → set source to read-only. If not → rollback (destination depot is fresh; source untouched).</div></div>
+  </div>
+</section>
+
+<!-- 7. Validation strategy -->
+<section class="slide">
+  <h3>Validation Without Perforce Sign-Off</h3>
+  <h1>Three independent gates prove the migration is faithful</h1>
+  <div class="grid grid-3" style="margin-top:18px">
+    <div class="card">
+      <p class="label">Gate 1 · Pre-zip</p>
+      <h2 style="font-size:1.2em">Spec coverage proof</h2>
+      <ul class="tight">
+        <li>Total view lines ≥ 2 × distinct moves discovered</li>
+        <li>Random 100-pair manual inspection (both halves present)</li>
+        <li><code class="inline">p4 files //depot/...</code> count comparable to view size</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="label">Gate 2 · Post-unzip</p>
+      <h2 style="font-size:1.2em">Server-level verify</h2>
+      <ul class="tight">
+        <li><code class="inline">p4 verify -q //depot/...</code> on destination — zero BAD/MISSING</li>
+        <li>Changelist count parity (source vs. destination)</li>
+        <li>Revision count parity per top-level branch</li>
+      </ul>
+    </div>
+    <div class="card">
+      <p class="label">Gate 3 · End-to-end</p>
+      <h2 style="font-size:1.2em">Sample diff</h2>
+      <ul class="tight">
+        <li>Pick 50 files at random across history</li>
+        <li><code class="inline">p4 print -q</code> + SHA256 on both sides</li>
+        <li>All 50 hashes must match — no exceptions</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:22px;color:var(--ink-dim)"><strong>If any gate fails, the migration does not promote.</strong> The destination depot is created fresh per attempt; the source is read-only from T+08:00. Failure is reversible up to that point.</p>
+</section>
+
+<!-- 8. Risks + mitigations 1 -->
+<section class="slide">
+  <h3>Risks &amp; Mitigations · 1 of 2</h3>
+  <h1>Technical risks of running our own tool</h1>
+  <div class="grid grid-2">
+    <div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Move chains (A→B→C across changelists)</div><div class="sev">Medium</div></div>
+        <div class="desc">Tool may capture only the most recent <code class="inline">movedFile</code>, missing intermediate hops. Result: <code class="inline">p4 zip</code> still fails on a chain.</div>
+        <div class="mit"><b>Mitigation:</b> after first scan, run a transitive-closure SQL pass over <code class="inline">moves.sqlite</code> — for every (src,tgt) row, recursively pull any other row whose tgt = our src. Add the transitive paths to the spec. Re-zip if needed.</div>
+      </div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Branch-of-move &amp; integration-then-move</div><div class="sev">Medium</div></div>
+        <div class="desc">Some branched-and-then-moved files surface as <code class="inline">branch</code>+<code class="inline">add</code>+<code class="inline">delete</code>, not <code class="inline">move/*</code>. Tool would miss these.</div>
+        <div class="mit"><b>Mitigation:</b> on first <code class="inline">p4 zip</code> failure, the tool already returns the failing changelist. Run <code class="inline">p4 describe -s</code> on it, add any referenced paths to the spec, re-zip. Empirically converges within 2–3 iterations.</div>
+      </div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Lazy copies / integration history</div><div class="sev">Low</div></div>
+        <div class="desc">Lazy-copy attribution lives in integration records, not <code class="inline">filelog</code>. Could in principle widen the required view further.</div>
+        <div class="mit"><b>Mitigation:</b> if the iterative loop above doesn't converge after 5 retries, fall back to a single broad spec (<code class="inline">//depot/... //remote/...</code>) and let <code class="inline">p4 zip</code> use the entire depot. Slower zip, but guarantees coverage.</div>
+      </div>
+    </div>
+    <div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Obliterated halves of moves</div><div class="sev">Low</div></div>
+        <div class="desc">If a move's other half was obliterated, <code class="inline">movedFile</code> is NULL → tool emits a one-sided row → no harm to spec, but no new coverage either.</div>
+        <div class="mit"><b>Mitigation:</b> these cases will not block <code class="inline">p4 zip</code> because Perforce already treats obliterated revisions as gone. Detected during Gate 2 verify.</div>
+      </div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Server load from parallel <code class="inline">filelog</code></div><div class="sev">Medium</div></div>
+        <div class="desc">8 parallel readers on a production server during business hours could degrade response.</div>
+        <div class="mit"><b>Mitigation:</b> default to <code class="inline">--workers 4</code> not 8 · run scan in off-peak window · monitor server with <code class="inline">p4 monitor show</code> · throttle to <code class="inline">--workers 2</code> if any p99 latency spike observed.</div>
+      </div>
+      <div class="risk-card">
+        <div class="head"><div class="t">SQLite cache corruption mid-run</div><div class="sev">Low</div></div>
+        <div class="desc">Power loss or process kill could leave the cache in a partial state.</div>
+        <div class="mit"><b>Mitigation:</b> SQLite is ACID by default · we commit per range · UNIQUE constraint dedupes restarts · worst case: delete cache and restart scan (idempotent).</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Risks + mitigations 2 -->
+<section class="slide">
+  <h3>Risks &amp; Mitigations · 2 of 2</h3>
+  <h1>Operational &amp; commercial risks</h1>
+  <div class="grid grid-2">
+    <div>
+      <div class="risk-card">
+        <div class="head"><div class="t">No vendor sign-off on the workaround</div><div class="sev">Medium</div></div>
+        <div class="desc">If the migrated depot later shows an issue, Perforce support may decline to debug because the depot was produced by a non-Perforce tool path.</div>
+        <div class="mit"><b>Mitigation:</b> our tool only generates a remote spec and runs the official <code class="inline">p4 zip</code> binary — output format is identical to a hand-built spec run. Document the exact spec used, archive it, share with support if a case is opened.</div>
+      </div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Future <code class="inline">p4 zip</code> behaviour change</div><div class="sev">Low</div></div>
+        <div class="desc">A future Perforce release could deprecate or alter remote-spec format, breaking re-runs.</div>
+        <div class="mit"><b>Mitigation:</b> we only need this tool for 2 more migrations. After that the depots live on the destination; the tool is retired or replaced by Perforce's official fix when available.</div>
+      </div>
+      <div class="risk-card bad">
+        <div class="head"><div class="t">Data loss during zip → unzip cycle</div><div class="sev">High</div></div>
+        <div class="desc">Worst-case scenario: corrupted zip is unzipped onto destination, source decommissioned before discovery.</div>
+        <div class="mit"><b>Mitigation:</b> source server is set to <strong>read-only, not decommissioned</strong>, until ALL THREE depots have passed Gate 3 sample-diff. Decommission only after end-of-project sign-off.</div>
+      </div>
+    </div>
+    <div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Tool maintenance burden</div><div class="sev">Low</div></div>
+        <div class="desc">Custom tooling means we own bugs and maintenance.</div>
+        <div class="mit"><b>Mitigation:</b> 400 LoC, MIT-licensed, 16 tests, single Python dependency (<code class="inline">p4python</code>). Maintainable in-house. Drop the moment Perforce ships the fix.</div>
+      </div>
+      <div class="risk-card">
+        <div class="head"><div class="t">Customer (Amdocs) trust</div><div class="sev">Medium</div></div>
+        <div class="desc">Amdocs may question why we chose a custom tool over waiting for Perforce.</div>
+        <div class="mit"><b>Mitigation:</b> deliver this exact deck to Amdocs · make the source readable · show passing tests · offer to demo live · point to the documented validation gates · their migration deadline beats the vendor's roadmap.</div>
+      </div>
+      <div class="risk-card ok">
+        <div class="head"><div class="t">Time-to-finish</div><div class="sev">Win</div></div>
+        <div class="desc">Manual workaround: weeks. Wait for fix: unknown. Our tool: <strong>today</strong>.</div>
+        <div class="mit"><b>Net effect:</b> we unblock the consolidation today and reuse the same playbook for the next two depots — converting a multi-month risk into a one-day execution.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 10. Step-by-step run-book -->
+<section class="slide">
+  <h3>Run-book</h3>
+  <h1>The 10 commands we run today</h1>
+  <ol class="tight" style="font-size:clamp(15px,1.2vw,19px);columns:2;column-gap:36px">
+    <li><strong>Snapshot:</strong> back up <code class="inline">/p4/2/root</code> (storage-level snapshot)</li>
+    <li><strong>Capture HEAD:</strong> <code class="inline">p4 -p illin2343:1666 counter change</code></li>
+    <li><strong>Install tool:</strong> <code class="inline">pip install -e "p4-move-zip-fixer[p4]"</code></li>
+    <li><strong>Authenticate:</strong> <code class="inline">P4PORT=illin2343:1666 p4 login</code></li>
+    <li><strong>Scan:</strong> <code class="inline">p4-move-zip-fixer scan --depot //depot/... --head $HEAD --workers 4 --db moves.sqlite</code></li>
+    <li><strong>Build spec:</strong> <code class="inline">p4-move-zip-fixer build-spec --db moves.sqlite --remote migration-remote</code></li>
+    <li><strong>Gate 1 inspect:</strong> <code class="inline">p4 remote -o migration-remote</code> &amp; sample-check</li>
+    <li><strong>Zip:</strong> <code class="inline">p4-move-zip-fixer zip --remote migration-remote --output default-depot.zip</code> &nbsp;<em>(loop on failed changelists if any)</em></li>
+    <li><strong>Transfer &amp; unzip:</strong> <code class="inline">scp default-depot.zip p4jirastg22:/tmp/ &amp;&amp; p4 unzip -i /tmp/default-depot.zip</code></li>
+    <li><strong>Gate 2 + 3:</strong> <code class="inline">p4 verify -q //depot/...</code> · changelist parity · 50-file SHA256 sample diff</li>
+  </ol>
+  <p style="margin-top:18px"><span class="pill ok">All commands logged</span> &nbsp;<span class="pill">Spec archived</span> &nbsp;<span class="pill">SQLite kept</span> — full audit trail for later support, cases, or repeat migrations.</p>
+</section>
+
+<!-- 11. Rollback plan -->
+<section class="slide">
+  <h3>Rollback Plan</h3>
+  <h1>If anything fails — we have an out</h1>
+  <div class="grid grid-2" style="margin-top:14px">
+    <div>
+      <h2>Failure points &amp; responses</h2>
+      <table>
+        <thead><tr><th>Phase fails</th><th>Response</th></tr></thead>
+        <tbody>
+          <tr><td>Scan</td><td>Re-run; resumes from SQLite</td></tr>
+          <tr><td>Build spec</td><td>Inspect SQLite; regenerate</td></tr>
+          <tr><td>Zip</td><td>Failed changelists printed → re-scan range → rebuild → retry</td></tr>
+          <tr><td>Unzip on destination</td><td>Drop the destination depot, restart from "transfer &amp; unzip"</td></tr>
+          <tr><td>Gate 2 verify</td><td>Drop destination depot, re-investigate spec</td></tr>
+          <tr><td>Gate 3 sample diff</td><td>Drop destination depot, escalate to manual investigation</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h2>Hard guarantees</h2>
+      <div class="risk-card ok">
+        <div class="head"><div class="t">Source server untouched</div><div class="sev">Guarantee</div></div>
+        <div class="desc">All operations on source are <strong>read-only</strong>. Worst case: try again tomorrow.</div>
+      </div>
+      <div class="risk-card ok">
+        <div class="head"><div class="t">Destination is disposable</div><div class="sev">Guarantee</div></div>
+        <div class="desc">Failed unzip → drop the depot directory and restart. Nothing else on <code class="inline">p4jirastg22</code> is affected.</div>
+      </div>
+      <div class="risk-card ok">
+        <div class="head"><div class="t">Source remains read-only, not decommissioned</div><div class="sev">Guarantee</div></div>
+        <div class="desc">Until ALL three depots pass Gate 3 — source stays available as a fallback. Decommission is a separate, later decision.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12. What about Perforce -->
+<section class="slide">
+  <h3>What About Perforce</h3>
+  <h1>We keep them in the loop — without depending on them</h1>
+  <div class="grid grid-2" style="margin-top:18px">
+    <div>
+      <h2 style="color:var(--ok)">What we DO</h2>
+      <ul class="tight">
+        <li>Continue the support case — log progress against case 01565143</li>
+        <li>Share the resulting spec + logs with Perforce after the run, for their case file</li>
+        <li>Track the official enhancement for the next two depots</li>
+        <li>If their fix ships before depot #3, switch to the official method</li>
+      </ul>
+    </div>
+    <div>
+      <h2 style="color:var(--bad)">What we DO NOT</h2>
+      <ul class="tight">
+        <li>Wait for Perforce engineering before today's run</li>
+        <li>Ask permission to share the tool with our customer — it's our tool, MIT-licensed</li>
+        <li>Submit the tool to Perforce contrib until <em>after</em> the migration succeeds</li>
+        <li>Block the Amdocs deadline on a vendor roadmap</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:22px;color:var(--ink-dim);max-width:1100px"><strong>Posture:</strong> respectful, transparent, but independent. Perforce is informed; Perforce is not in the critical path.</p>
+</section>
+
+<!-- 13. Risk-vs-benefit recap -->
+<section class="slide">
+  <h3>The Net Picture</h3>
+  <h1>Three options · one chosen</h1>
+  <table style="margin-top:18px">
+    <thead><tr><th>Aspect</th><th>Manual remote spec</th><th>Wait for Perforce fix</th><th>Our tool · TODAY</th></tr></thead>
+    <tbody>
+      <tr><td>Time to delivery</td><td class="bad">weeks–months</td><td class="bad">unknown</td><td class="ok">one day</td></tr>
+      <tr><td>Risk of missed paths</td><td class="bad">very high</td><td>none</td><td class="warn">low — mitigated by validation gates</td></tr>
+      <tr><td>Reusable for next 2 depots</td><td class="bad">no</td><td>yes (when shipped)</td><td class="ok">yes — same playbook</td></tr>
+      <tr><td>Vendor support posture</td><td class="ok">official</td><td class="ok">official</td><td class="warn">vendor informed, not endorsed</td></tr>
+      <tr><td>Reversible if it fails</td><td class="ok">yes</td><td>n/a</td><td class="ok">yes — source read-only, destination disposable</td></tr>
+      <tr><td>Customer impact</td><td class="bad">multi-month delay</td><td class="bad">indefinite</td><td class="ok">deadline met</td></tr>
+      <tr><td>Recommended</td><td class="bad">no</td><td class="bad">no</td><td class="ok">YES</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 14. Go/no-go decision -->
+<section class="slide">
+  <h3>Decision Required</h3>
+  <h1>GO / NO-GO for today's run</h1>
+  <ul class="checklist" style="margin-top:18px;font-size:clamp(15px,1.2vw,19px)">
+    <li class="done">Tool built, tested (16/16), licensed (MIT)</li>
+    <li class="done">Source &amp; destination servers verified at matching version</li>
+    <li class="done">Validation gates defined (3 independent checks)</li>
+    <li class="done">Rollback plan documented &amp; reversibility guarantees in place</li>
+    <li class="done">Risks identified with concrete mitigations for each</li>
+    <li>Storage-level snapshot of source taken &amp; verified ←  <em>today's first action</em></li>
+    <li>Off-peak scan window confirmed with Amdocs ops</li>
+    <li>Sign-off on this execution plan from Amdocs migration lead</li>
+  </ul>
+  <p style="margin-top:22px;color:var(--ink);font-size:1.1em"><strong>Once the bottom three boxes are checked, we run.</strong></p>
+</section>
+
+<!-- 15. Close -->
+<section class="slide" style="text-align:center;align-items:center">
+  <div style="margin:auto;max-width:1100px">
+    <h3 style="text-align:center">Ready When You Are</h3>
+    <h1 class="title-mega" style="text-align:center">Let's finish this today.</h1>
+    <p class="subtitle" style="margin:0 auto">Plan, tool, validation, and rollback are all in place. Source is safe. Destination is disposable. The migration is reversible until Gate 3 passes — and then it's done.</p>
+    <div class="meta-line" style="text-align:center">Daniel Liezrowice · CTO · Engineering Software Lab Ltd. · Case 01565143 · v0.1.0</div>
+  </div>
+</section>
+
+</div>
+
+<button class="nav left hidden" id="prev" aria-label="Previous">‹</button>
+<button class="nav right" id="next" aria-label="Next">›</button>
+<div class="progress"><div class="bar" id="bar"></div></div>
+<div class="counter" id="counter">1 / 15</div>
+
+<script>
+(function(){
+  const deck = document.getElementById('deck');
+  const slides = deck.querySelectorAll('.slide');
+  const total = slides.length;
+  const prev = document.getElementById('prev');
+  const next = document.getElementById('next');
+  const bar = document.getElementById('bar');
+  const counter = document.getElementById('counter');
+  const hint = document.getElementById('hint');
+  let i = 0, hintHidden = false;
+
+  function show(n){
+    i = Math.max(0, Math.min(total-1, n));
+    deck.style.transform = `translateX(${-i*100}vw)`;
+    bar.style.width = ((i+1)/total*100)+'%';
+    counter.textContent = `${i+1} / ${total}`;
+    prev.classList.toggle('hidden', i===0);
+    next.classList.toggle('hidden', i===total-1);
+    if (!hintHidden && i>0 && hint){ hint.classList.add('hide'); hintHidden = true; }
+  }
+  prev.addEventListener('click', ()=>show(i-1));
+  next.addEventListener('click', ()=>show(i+1));
+  document.addEventListener('keydown', e=>{
+    if (e.key==='ArrowRight' || e.key===' ') { e.preventDefault(); show(i+1); }
+    else if (e.key==='ArrowLeft') { e.preventDefault(); show(i-1); }
+    else if (e.key==='Home') show(0);
+    else if (e.key==='End')  show(total-1);
+  });
+  let tx=0, ty=0;
+  document.addEventListener('touchstart', e=>{ tx=e.touches[0].clientX; ty=e.touches[0].clientY; }, {passive:true});
+  document.addEventListener('touchend',   e=>{
+    const dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty;
+    if (Math.abs(dx)>50 && Math.abs(dx)>Math.abs(dy)) show(i + (dx<0?1:-1));
+  });
+  let mx=null;
+  document.addEventListener('mousedown', e=>{ if (e.target.closest('.nav,.counter,a,button,pre')) return; mx=e.clientX; });
+  document.addEventListener('mouseup',   e=>{
+    if (mx===null) return;
+    const dx=e.clientX-mx; mx=null;
+    if (Math.abs(dx)>50) show(i + (dx<0?1:-1));
+  });
+  show(0);
+})();
+</script>
+</body>
+</html>
