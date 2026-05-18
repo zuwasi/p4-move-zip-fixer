@@ -22,7 +22,7 @@ def test_build_view_lines_skips_non_depot_paths():
     ]
 
 
-def test_build_remote_spec_writes_full_view(tmp_path, mock_p4):
+def test_build_remote_spec_writes_depotmap(tmp_path, mock_p4):
     factory, p4 = mock_p4()
     db = tmp_path / "moves.sqlite"
     with open_store(db) as store:
@@ -33,11 +33,13 @@ def test_build_remote_spec_writes_full_view(tmp_path, mock_p4):
         ])
         n = build_remote_spec(store, "migration", p4_factory=factory)
 
-    assert n == 4  # 2 distinct moves × 2 sides
+    # 1 catch-all + 4 per-file lines (2 distinct moves × 2 sides)
+    assert n == 5
     spec = p4.saved_remotes["migration"]
-    assert any("//depot/old/a.c" in line for line in spec["View"])
-    assert any("//depot/new/b.c" in line for line in spec["View"])
-    assert spec["DepotMap"] == ["//depot/... //remote/..."]
+    assert "View" not in spec  # remote specs have no View field
+    assert spec["DepotMap"][0] == "//depot/... //remote/..."
+    assert any("//depot/old/a.c" in line for line in spec["DepotMap"])
+    assert any("//depot/new/b.c" in line for line in spec["DepotMap"])
 
 
 def test_expand_spec_adds_changelist_paths(mock_p4):
@@ -46,8 +48,10 @@ def test_expand_spec_adds_changelist_paths(mock_p4):
     preset = {
         "migration": {
             "RemoteID": "migration",
-            "View": ['"//depot/old/a.c" "//remote/old/a.c"'],
-            "DepotMap": ["//depot/... //remote/..."],
+            "DepotMap": [
+                "//depot/... //remote/...",
+                '"//depot/old/a.c" "//remote/old/a.c"',
+            ],
         }
     }
     describe = {
@@ -59,17 +63,16 @@ def test_expand_spec_adds_changelist_paths(mock_p4):
         remote_name="migration", changelists=[781422], p4_factory=factory
     )
     assert added == 1
-    assert total == 2
+    assert total == 3  # catch-all + old + new
     spec = p4.saved_remotes["migration"]
-    assert any("//depot/new/a.c" in line for line in spec["View"])
+    assert any("//depot/new/a.c" in line for line in spec["DepotMap"])
 
 
 def test_expand_spec_no_new_paths(mock_p4):
     preset = {
         "migration": {
             "RemoteID": "migration",
-            "View": ['"//depot/x" "//remote/x"'],
-            "DepotMap": ["//depot/... //remote/..."],
+            "DepotMap": ['"//depot/x" "//remote/x"'],
         }
     }
     describe = {1: [{"depotFile": ["//depot/x"]}]}

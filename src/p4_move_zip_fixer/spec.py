@@ -31,20 +31,28 @@ def build_remote_spec(
     depot_map: str = "//depot/... //remote/...",
 ) -> int:
     """Generate and save a remote spec containing every path involved in a move.
-    Returns the number of view lines written."""
+
+    Path mappings go into the spec's **DepotMap** field — remote specs do not
+    have a 'View' field; that was a bug in earlier versions. The catch-all
+    `//depot/... //remote/...` line is included first so any path not
+    explicitly listed still has a default mapping; per-move file mappings
+    follow it so the source and target sides of every move are covered.
+
+    Returns the number of DepotMap lines written (including the catch-all).
+    """
     paths = store.all_paths()
-    view = build_view_lines(paths, remote_root=remote_root)
+    per_file = build_view_lines(paths, remote_root=remote_root)
+    depot_map_lines = [depot_map, *per_file]
 
     p4 = p4_factory()
     p4.connect()
     try:
         spec = p4.fetch_remote(remote_name)
-        spec["View"] = view
-        spec["DepotMap"] = [depot_map]
+        spec["DepotMap"] = depot_map_lines
         p4.save_remote(spec)
     finally:
         p4.disconnect()
-    return len(view)
+    return len(depot_map_lines)
 
 
 def _describe_paths(records: Iterable[dict[str, Any]]) -> set[str]:
@@ -80,9 +88,9 @@ def expand_spec_with_changelists(
     p4.connect()
     try:
         spec = p4.fetch_remote(remote_name)
-        existing_lines = list(spec.get("View") or [])
+        existing_lines = list(spec.get("DepotMap") or [])
 
-        # Existing depot paths are the first quoted token of each view line.
+        # Existing depot paths = first whitespace-or-quoted token of each line.
         existing_paths: set[str] = set()
         for line in existing_lines:
             line = line.strip()
@@ -105,8 +113,8 @@ def expand_spec_with_changelists(
         added = sorted(new_paths - existing_paths)
         if added:
             extra_lines = build_view_lines(added, remote_root=remote_root)
-            spec["View"] = existing_lines + extra_lines
+            spec["DepotMap"] = existing_lines + extra_lines
             p4.save_remote(spec)
-        return len(added), len(spec.get("View") or [])
+        return len(added), len(spec.get("DepotMap") or [])
     finally:
         p4.disconnect()

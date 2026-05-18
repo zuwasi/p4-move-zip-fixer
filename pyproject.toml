@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "p4-move-zip-fixer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Auto-discover Perforce move/add ↔ move/delete pairs and generate a complete remote spec so 'p4 zip' succeeds without manual path enumeration."
 readme = "README.md"
 requires-python = ">=3.9"

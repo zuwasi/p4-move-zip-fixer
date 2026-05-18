@@ -51,7 +51,9 @@ class MockP4:
     def fetch_remote(self, name: str) -> dict[str, Any]:
         if name in self.saved_remotes:
             return dict(self.saved_remotes[name])
-        return {"RemoteID": name, "View": [], "DepotMap": []}
+        # Default fields mirror a real Perforce remote spec (no 'View' field —
+        # that's a workspace concept; remote specs use DepotMap).
+        return {"RemoteID": name, "DepotMap": []}
 
     def save_remote(self, spec: dict[str, Any]) -> None:
         self.saved_remotes[spec["RemoteID"]] = spec
