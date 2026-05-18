@@ -6,6 +6,33 @@ from typing import Any, Callable, Iterable
 from .p4client import P4Like, make_p4
 from .store import MoveStore
 
+# Perforce imposes a hard ceiling on the number of lines a remote spec's
+# DepotMap field can hold (same as a client View). When `save_remote` is
+# called with a list larger than this, the server either silently truncates
+# the tail or rejects the save entirely. Either way the new entries we tried
+# to add never reach the server, which manifests as `p4 zip` failing on the
+# same changelist again with "+0 paths added" on the next expand attempt.
+MAX_DEPOT_MAP_LINES = 100_000
+
+
+class SpecCapReached(RuntimeError):
+    """Raised when adding more lines would exceed Perforce's DepotMap cap.
+
+    The caller (typically the auto-retry loop) should stop trying to widen
+    the spec further and either narrow the depot path, exclude the offending
+    changelist range, or split the zip into multiple ranges.
+    """
+
+    def __init__(self, current: int, attempted: int, cap: int = MAX_DEPOT_MAP_LINES):
+        self.current = current
+        self.attempted = attempted
+        self.cap = cap
+        super().__init__(
+            f"Remote spec DepotMap is at the Perforce cap of {cap} lines "
+            f"(current={current}, would add {attempted - current}). "
+            "Further per-path expansion will be silently dropped by the server."
+        )
+
 
 def build_view_lines(paths: Iterable[str], remote_root: str = "//remote") -> list[str]:
     """Translate //depot/foo/bar -> '//depot/foo/bar //remote/foo/bar'.
@@ -38,11 +65,17 @@ def build_remote_spec(
     explicitly listed still has a default mapping; per-move file mappings
     follow it so the source and target sides of every move are covered.
 
+    Raises :class:`SpecCapReached` if the resulting DepotMap would exceed
+    Perforce's hard cap (``MAX_DEPOT_MAP_LINES``).
+
     Returns the number of DepotMap lines written (including the catch-all).
     """
     paths = store.all_paths()
     per_file = build_view_lines(paths, remote_root=remote_root)
     depot_map_lines = [depot_map, *per_file]
+
+    if len(depot_map_lines) > MAX_DEPOT_MAP_LINES:
+        raise SpecCapReached(current=0, attempted=len(depot_map_lines))
 
     p4 = p4_factory()
     p4.connect()
@@ -82,7 +115,11 @@ def expand_spec_with_changelists(
     so the next zip attempt covers both sides of whatever caused the failure
     (move chain, branch-of-move, lazy copy, obliterated counterpart, etc.).
 
-    Returns (paths_added, total_view_lines_after).
+    Raises :class:`SpecCapReached` if the spec is already at the server cap
+    OR if applying the new lines would exceed the cap. Callers should treat
+    this as unrecoverable in-band and switch to the depot-exclusion fallback.
+
+    Returns ``(paths_added, total_view_lines_after)``.
     """
     p4 = p4_factory()
     p4.connect()
@@ -113,8 +150,19 @@ def expand_spec_with_changelists(
         added = sorted(new_paths - existing_paths)
         if added:
             extra_lines = build_view_lines(added, remote_root=remote_root)
+            new_total = len(existing_lines) + len(extra_lines)
+            if new_total > MAX_DEPOT_MAP_LINES:
+                raise SpecCapReached(current=len(existing_lines), attempted=new_total)
             spec["DepotMap"] = existing_lines + extra_lines
             p4.save_remote(spec)
-        return len(added), len(spec.get("DepotMap") or [])
+            # Re-fetch and verify the server actually persisted what we sent.
+            # Some Perforce builds silently truncate at the cap rather than
+            # erroring; detect that and surface it as SpecCapReached too.
+            fresh = p4.fetch_remote(remote_name)
+            persisted = list(fresh.get("DepotMap") or [])
+            if len(persisted) < new_total:
+                raise SpecCapReached(current=len(persisted), attempted=new_total)
+            return len(added), len(persisted)
+        return 0, len(existing_lines)
     finally:
         p4.disconnect()

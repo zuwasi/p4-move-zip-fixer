@@ -35,6 +35,27 @@ p4-move-zip-fixer build-spec --db moves.sqlite --remote migration-remote
 p4-move-zip-fixer zip --remote migration-remote --output migration.zip
 ```
 
+### Failure handling (v0.1.3+)
+
+The `zip` subcommand now handles three edge cases that previously caused the
+auto-retry loop to fail silently or loop forever:
+
+- **Stale output file** — `p4 zip` writes a partial archive when it errors
+  mid-stream and then refuses to overwrite it on the next attempt
+  (*"Output zip file ... already exists"*). The tool now clobbers the
+  partial file before every attempt. Use `--keep-failed-output` to opt out
+  (e.g. for forensic inspection of the partial archive).
+- **Spec at the Perforce DepotMap cap (100,000 lines)** — Perforce silently
+  drops further entries once a remote spec hits the cap, so additional
+  expansion would be a no-op. The tool now detects this and exits with a
+  clear `SpecCapReached` error and a runbook of recovery options (split
+  zip by changelist range, or add exclusions).
+- **Obliterated move counterpart** — when `p4 describe -s <CL>` returns no
+  new paths for a failing changelist (typically because the matching
+  `move/add` was obliterated), the loop aborts immediately instead of
+  retrying the same failure indefinitely, and prints copy-pasteable
+  commands to split the zip around the bad CL.
+
 ## Why this beats the manual workaround
 
 | Aspect                | Manual spec              | Wait for enhancement | This tool                |

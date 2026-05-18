@@ -72,3 +72,81 @@ def test_cli_zip_auto_retry_calls_expand_then_succeeds():
     assert result.exit_code == 0, result.output
     assert "succeeded on attempt 2" in result.output
     expand.assert_called_once()
+
+
+def test_cli_zip_aborts_when_expand_adds_zero_paths():
+    """If expand adds 0 new paths, the next p4 zip attempt will fail on the
+    same CL again — caused by an obliterated move counterpart that
+    `p4 describe -s` cannot see. The CLI must short-circuit immediately
+    rather than wasting another zip attempt and looping."""
+    runner = CliRunner()
+    failing = type("R", (), {"ok": False, "errors": ["change 781422 partial"],
+                             "failed_changes": [781422]})()
+
+    with patch("p4_move_zip_fixer.cli.run_zip", return_value=failing) as zipper, \
+         patch("p4_move_zip_fixer.cli.expand_spec_with_changelists",
+               return_value=(0, 100_000)) as expand:
+        result = runner.invoke(
+            cli.main,
+            ["zip", "--remote", "migration", "--output", "out.zip", "--auto-retry", "5"],
+        )
+    assert result.exit_code == 2
+    assert "Expand added 0 paths" in result.output
+    assert "Recovery options" in result.output
+    expand.assert_called_once()
+    # Only one zip attempt — no wasted second invocation.
+    assert zipper.call_count == 1
+
+
+def test_cli_zip_aborts_on_spec_cap_reached():
+    """SpecCapReached from expand must abort with a clear error and runbook."""
+    from p4_move_zip_fixer.spec import SpecCapReached
+    runner = CliRunner()
+    failing = type("R", (), {"ok": False, "errors": ["change 999 partial"],
+                             "failed_changes": [999]})()
+
+    with patch("p4_move_zip_fixer.cli.run_zip", return_value=failing), \
+         patch("p4_move_zip_fixer.cli.expand_spec_with_changelists",
+               side_effect=SpecCapReached(current=100_000, attempted=100_005)):
+        result = runner.invoke(
+            cli.main, ["zip", "--remote", "migration", "--output", "out.zip"]
+        )
+    assert result.exit_code == 3
+    assert "cap" in result.output.lower()
+    assert "Recovery options" in result.output
+
+
+def test_cli_zip_aborts_when_output_already_exists():
+    """If p4 zip reports the output already exists (e.g. user passed
+    --keep-failed-output and the prior attempt wrote a partial), we must
+    not auto-retry — file-system state, not view widening, is the issue."""
+    runner = CliRunner()
+    failing = type("R", (), {
+        "ok": False,
+        "errors": ["Output zip file /tmp/x.zip already exists."],
+        "failed_changes": [],
+    })()
+    with patch("p4_move_zip_fixer.cli.run_zip", return_value=failing):
+        result = runner.invoke(
+            cli.main,
+            ["zip", "--remote", "migration", "--output", "/tmp/x.zip",
+             "--keep-failed-output"],
+        )
+    assert result.exit_code == 2
+    assert "already exists" in result.output
+
+
+def test_cli_zip_passes_clobber_flag_to_run_zip():
+    """Default invocation should clobber stale output; --keep-failed-output
+    must propagate clobber=False."""
+    runner = CliRunner()
+    ok = type("R", (), {"ok": True, "errors": [], "failed_changes": []})()
+
+    with patch("p4_move_zip_fixer.cli.run_zip", return_value=ok) as zipper:
+        runner.invoke(cli.main, ["zip", "--remote", "m", "--output", "out.zip"])
+    assert zipper.call_args.kwargs["clobber"] is True
+
+    with patch("p4_move_zip_fixer.cli.run_zip", return_value=ok) as zipper:
+        runner.invoke(cli.main, ["zip", "--remote", "m", "--output", "out.zip",
+                                 "--keep-failed-output"])
+    assert zipper.call_args.kwargs["clobber"] is False

@@ -1,4 +1,8 @@
+import pytest
+
 from p4_move_zip_fixer.spec import (
+    MAX_DEPOT_MAP_LINES,
+    SpecCapReached,
     build_remote_spec,
     build_view_lines,
     expand_spec_with_changelists,
@@ -82,3 +86,35 @@ def test_expand_spec_no_new_paths(mock_p4):
     )
     assert added == 0
     assert total == 1
+
+
+def test_expand_spec_raises_when_cap_would_be_exceeded(mock_p4):
+    """If the spec is already at the Perforce DepotMap cap, attempting to
+    add more lines must raise SpecCapReached rather than silently no-op."""
+    huge_existing = [f'"//depot/old/f{i}.c" "//remote/old/f{i}.c"'
+                     for i in range(MAX_DEPOT_MAP_LINES)]
+    preset = {
+        "migration": {"RemoteID": "migration", "DepotMap": huge_existing},
+    }
+    describe = {42: [{"depotFile": ["//depot/new/added.c"]}]}
+    factory, _ = mock_p4(preset_remotes=preset, describe_records=describe)
+
+    with pytest.raises(SpecCapReached) as excinfo:
+        expand_spec_with_changelists(
+            remote_name="migration", changelists=[42], p4_factory=factory
+        )
+    assert excinfo.value.cap == MAX_DEPOT_MAP_LINES
+
+
+def test_build_remote_spec_raises_when_cap_exceeded(tmp_path, mock_p4):
+    """Initial build of a spec must also refuse to silently lose paths."""
+    factory, _ = mock_p4()
+    db = tmp_path / "moves.sqlite"
+    # MAX_DEPOT_MAP_LINES rows of distinct paths -> per-file lines exceed cap.
+    with open_store(db) as store:
+        store.insert_moves([
+            MoveRow(f"//depot/old/f{i}.c", f"//depot/new/f{i}.c", i, "move/add")
+            for i in range(MAX_DEPOT_MAP_LINES)
+        ])
+        with pytest.raises(SpecCapReached):
+            build_remote_spec(store, "migration", p4_factory=factory)
