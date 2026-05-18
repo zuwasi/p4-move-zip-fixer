@@ -76,8 +76,8 @@ def expand_cmd(remote_name: str, changelists: tuple[int, ...], remote_root: str)
 @click.option("--remote", "remote_name", required=True)
 @click.option("--output", "output_path", required=True, type=click.Path())
 @click.option("--depot", "depot_path", default="//depot/...@1,#head", show_default=True)
-@click.option("--auto-retry", default=0, show_default=True, type=int,
-              help="If >0, on failure auto-expand the spec from each failed changelist and retry up to N times.")
+@click.option("--auto-retry", default=20, show_default=True, type=int,
+              help="On failure, auto-expand the spec from each failed changelist and retry up to N times. Set 0 to disable.")
 @click.option("--remote-root", default="//remote", show_default=True,
               help="Used only with --auto-retry when expanding the spec.")
 def zip_cmd(remote_name: str, output_path: str, depot_path: str,

@@ -47,9 +47,28 @@ def test_cli_zip_failure_exits_nonzero():
     runner = CliRunner()
     fake = type("R", (), {"ok": False, "errors": ["Partial action in change 5"], "failed_changes": [5]})()
     with patch("p4_move_zip_fixer.cli.run_zip", return_value=fake):
+        # disable auto-retry so we test the plain "fail fast" path
         result = runner.invoke(
-            cli.main, ["zip", "--remote", "migration", "--output", "out.zip"]
+            cli.main,
+            ["zip", "--remote", "migration", "--output", "out.zip", "--auto-retry", "0"],
         )
     assert result.exit_code == 2
     assert "FAILED" in result.output
     assert "[5]" in result.output
+
+
+def test_cli_zip_auto_retry_calls_expand_then_succeeds():
+    """Verify --auto-retry default invokes expand_spec_with_changelists on
+    failure and stops once run_zip reports success."""
+    runner = CliRunner()
+    failing = type("R", (), {"ok": False, "errors": ["change 7 partial"], "failed_changes": [7]})()
+    ok = type("R", (), {"ok": True, "errors": [], "failed_changes": []})()
+
+    with patch("p4_move_zip_fixer.cli.run_zip", side_effect=[failing, ok]), \
+         patch("p4_move_zip_fixer.cli.expand_spec_with_changelists", return_value=(3, 100)) as expand:
+        result = runner.invoke(
+            cli.main, ["zip", "--remote", "migration", "--output", "out.zip"]
+        )
+    assert result.exit_code == 0, result.output
+    assert "succeeded on attempt 2" in result.output
+    expand.assert_called_once()
