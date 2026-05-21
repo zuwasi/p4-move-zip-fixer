@@ -43,6 +43,8 @@ We recommend trying them in **this order**, stopping at the first one that succe
 
 If you have a time pressure and want the highest-confidence path with the fewest moving parts: **C**. If you want to minimise wire bandwidth and you already have a place to land the clone: **B**. If your destination needs to mirror the source exactly: **A**.
 
+> **⚡ Fast path inside Option B (added in v0.1.4).** Branch `option-b-clone-and-sanitize` now includes [`scripts/auto-skip-zip.py`](https://github.com/zuwasi/p4-move-zip-fixer/blob/option-b-clone-and-sanitize/docs/migration-options/option-b-clone-and-sanitize/scripts/auto-skip-zip.py), a **read-only-against-source** loop that produces N chunk zips automatically split around every changelist whose move counterpart was obliterated. **No clone, no obliterate, no DepotMap > 100k risk.** The trade-off: each skipped CL is recorded in `skipped-cls.json` and is not transferred — those CLs have no recoverable content on source anyway (move target is gone). Recommended when an hours-long clone is not affordable. See the *Fast path* section at the top of the [Option B RUNBOOK](https://github.com/zuwasi/p4-move-zip-fixer/blob/option-b-clone-and-sanitize/docs/migration-options/option-b-clone-and-sanitize/RUNBOOK.md).
+
 ## How to use the branches
 
 ```bash
