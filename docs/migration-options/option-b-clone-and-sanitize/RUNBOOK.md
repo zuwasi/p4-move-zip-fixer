@@ -5,6 +5,58 @@
 **Best when:** you want to keep `p4-move-zip-fixer` in the loop, your depot has obliterated history, and per-depot transfer is preferable to whole-server
 **Time to first byte:** hours (clone + sanitize + zip)
 
+## ⚡ Fast path — no clone, no obliterate (new in v0.1.4)
+
+If you cannot spend hours building a clone, use `scripts/auto-skip-zip.py`.
+It runs `p4-move-zip-fixer zip` in a loop against the **source** (read-only —
+no writes are ever sent to the source server) and **automatically splits the
+output into multiple chunk-NNN.zip files around every changelist that is
+unrecoverable by spec widening** (the "Expand added 0 paths" case — typically
+an orphan `move/add` / `move/delete` whose counterpart was obliterated long
+ago).
+
+```bash
+# on the source host (e.g. illin2343), read-only against p4d
+python scripts/auto-skip-zip.py \
+    --p4port illin2343:1666 \
+    --remote migration-remote \
+    --depot //depot/... \
+    --out-dir /p4data/export/chunks \
+    --head 817597
+```
+
+Outputs:
+```
+/p4data/export/chunks/chunk-0001.zip          # CLs 1..781421
+/p4data/export/chunks/chunk-0002.zip          # CLs 781423..<next_bad - 1>
+/p4data/export/chunks/chunk-0003.zip          # ...
+/p4data/export/chunks/manifest.json           # chunks + slices view
+/p4data/export/chunks/skipped-cls.json        # full audit of skipped CLs
+```
+
+Replay on destination, in CL order (uses the same `sliced-unzip.py`):
+```bash
+python scripts/sliced-unzip.py \
+    --p4port destination:1666 \
+    --in-dir /import/chunks/
+```
+
+**What the fast path costs you:** every changelist listed in
+`skipped-cls.json` is not transferred. Each one has the form *"move whose
+counterpart is already obliterated"*, so the destination would have nothing
+to materialise from them anyway — the move target is gone on the source. You
+keep the audit so the customer can later restore individual paths from a
+backup if any are still important.
+
+**When NOT to use the fast path:**
+* If policy requires every CL to be present in destination history (use the
+  full clone+obliterate flow below instead, which preserves CL continuity).
+* If you have *hundreds* of orphans — at that scale the cumulative skipped
+  history may be significant; clone + sanitize is cleaner.
+
+The full **clone + sanitize** flow remains below as the zero-history-loss
+option.
+
 ## What this is
 
 Spin up a **disposable clone** of the source server from a checkpoint, surgically remove the small number of orphan-move records that break `p4 zip`, then run `p4-move-zip-fixer` against the clone. The destination receives a clean zip with no holes.
@@ -204,10 +256,11 @@ Source decommission is a separate decision taken later.
 
 ## Helper scripts (shipped on this branch)
 
+- [`scripts/auto-skip-zip.py`](scripts/auto-skip-zip.py) — **fast path.** Read-only against source. Produces N chunk zips + a JSON audit, automatically stepping over any changelist whose orphan-move counterpart was obliterated. No clone, no obliterate, no DepotMap > 100k risk.
 - [`scripts/find-orphan-moves.py`](scripts/find-orphan-moves.py) — discovers every move action whose counterpart is missing
 - [`scripts/sanitize-clone.py`](scripts/sanitize-clone.py) — `--dry-run` by default; obliterates orphan halves with `--execute --i-really-mean-it`
 - [`scripts/sliced-zip.py`](scripts/sliced-zip.py) — bisects the depot history into ≤95k-path slices and runs `p4-move-zip-fixer zip` on each
-- [`scripts/sliced-unzip.py`](scripts/sliced-unzip.py) — replays the slices on the destination in CL order
+- [`scripts/sliced-unzip.py`](scripts/sliced-unzip.py) — replays the slices (or chunks from `auto-skip-zip.py`) on the destination in CL order
 
 ## When to abandon this option
 
