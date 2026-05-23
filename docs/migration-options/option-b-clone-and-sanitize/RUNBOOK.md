@@ -5,57 +5,80 @@
 **Best when:** you want to keep `p4-move-zip-fixer` in the loop, your depot has obliterated history, and per-depot transfer is preferable to whole-server
 **Time to first byte:** hours (clone + sanitize + zip)
 
-## ⚡ Fast path — no clone, no obliterate (new in v0.1.4)
+## ⚡ Fast path — no clone, no obliterate (revised v0.1.5)
 
 If you cannot spend hours building a clone, use `scripts/auto-skip-zip.py`.
-It runs `p4-move-zip-fixer zip` in a loop against the **source** (read-only —
-no writes are ever sent to the source server) and **automatically splits the
-output into multiple chunk-NNN.zip files around every changelist that is
-unrecoverable by spec widening** (the "Expand added 0 paths" case — typically
-an orphan `move/add` / `move/delete` whose counterpart was obliterated long
-ago).
+It runs `p4-move-zip-fixer zip` in a loop against the **source** (read-only
+against depot content — the only write is to the *remote spec metadata* that
+you already created with `build-spec`) and **automatically adds a DepotMap
+exclusion line for every orphan path that p4 zip refuses to process**, then
+retries until p4 zip succeeds.
+
+### Why exclusion, not chunking
+
+`p4 zip` walks each file's full revision history regardless of the CL range
+you pass on `--depot`. That means splitting the zip into `@1,#781421` and
+`@781423,#head` will **still** trip on file revision `#2` at CL 781422 if the
+file is in the DepotMap. The only thing that actually stops `p4 zip` from
+inspecting an orphan file is to remove the file from the view via an
+exclusion line:
+
+```
+-//depot/Advocacy/HF/.../AmdocsCRM-BM-Collection__V8_1_2_5_1.jar //remote/...
+```
+
+This is recovery option #3 in `p4-move-zip-fixer`'s own guidance, automated.
+
+### Run
 
 ```bash
-# on the source host (e.g. illin2343), read-only against p4d
+# on the source host (e.g. illin2343), against p4d
 python scripts/auto-skip-zip.py \
-    --p4port illin2343:1666 \
     --remote migration-remote \
     --depot //depot/... \
-    --out-dir /p4data/export/chunks \
-    --head 817597
+    --output /p4data/export/default-depot.zip
 ```
 
-Outputs:
+Each iteration:
+1. Try `p4-move-zip-fixer zip` with the current spec.
+2. On failure with `Change N performs a move/X on //depot/...#rev` →
+   parse the depot path, append `-"//depot/..." "//remote/..."` to the
+   spec's `DepotMap`, save the spec, retry.
+3. Loop until `p4 zip` succeeds or the same path needs excluding twice
+   (which means the server didn't honour the update — abort with guidance).
+
+### Outputs
+
 ```
-/p4data/export/chunks/chunk-0001.zip          # CLs 1..781421
-/p4data/export/chunks/chunk-0002.zip          # CLs 781423..<next_bad - 1>
-/p4data/export/chunks/chunk-0003.zip          # ...
-/p4data/export/chunks/manifest.json           # chunks + slices view
-/p4data/export/chunks/skipped-cls.json        # full audit of skipped CLs
+/p4data/export/default-depot.zip                    # single archive, ready to ship
+/p4data/export/default-depot.zip.excluded-paths.json # audit of every excluded path
 ```
 
-Replay on destination, in CL order (uses the same `sliced-unzip.py`):
+### Replay on destination
+
+Ordinary `p4 unzip` — no manifest required because it's one archive:
 ```bash
-python scripts/sliced-unzip.py \
-    --p4port destination:1666 \
-    --in-dir /import/chunks/
+p4 -p destination:1666 unzip -i /import/default-depot.zip
 ```
 
-**What the fast path costs you:** every changelist listed in
-`skipped-cls.json` is not transferred. Each one has the form *"move whose
-counterpart is already obliterated"*, so the destination would have nothing
-to materialise from them anyway — the move target is gone on the source. You
-keep the audit so the customer can later restore individual paths from a
-backup if any are still important.
+### What the fast path costs you
 
-**When NOT to use the fast path:**
-* If policy requires every CL to be present in destination history (use the
-  full clone+obliterate flow below instead, which preserves CL continuity).
-* If you have *hundreds* of orphans — at that scale the cumulative skipped
-  history may be significant; clone + sanitize is cleaner.
+Every depot path listed in `excluded-paths.json` is **not transferred** to
+the destination. Each one is a file whose move counterpart was already
+obliterated on source, so the destination would have had no way to
+materialise the file anyway — but you do lose that file's recorded
+metadata. The audit file lets you restore individual paths from backup
+later if any turn out to be important.
 
-The full **clone + sanitize** flow remains below as the zero-history-loss
-option.
+### When NOT to use the fast path
+
+* If policy requires every depot path to be present in destination history
+  → use the full clone+obliterate flow below (preserves continuity).
+* If you have hundreds of distinct orphan paths → the cumulative loss may
+  be significant; clone + sanitize is cleaner.
+
+The full **clone + sanitize** flow remains below as the
+zero-history-loss option.
 
 ## What this is
 
@@ -256,7 +279,7 @@ Source decommission is a separate decision taken later.
 
 ## Helper scripts (shipped on this branch)
 
-- [`scripts/auto-skip-zip.py`](scripts/auto-skip-zip.py) — **fast path.** Read-only against source. Produces N chunk zips + a JSON audit, automatically stepping over any changelist whose orphan-move counterpart was obliterated. No clone, no obliterate, no DepotMap > 100k risk.
+- [`scripts/auto-skip-zip.py`](scripts/auto-skip-zip.py) — **fast path.** Produces one zip + a JSON audit, automatically appending DepotMap exclusion lines for every orphan path that p4 zip refuses to process and retrying. No clone, no obliterate. Only writes to the remote-spec metadata you already created.
 - [`scripts/find-orphan-moves.py`](scripts/find-orphan-moves.py) — discovers every move action whose counterpart is missing
 - [`scripts/sanitize-clone.py`](scripts/sanitize-clone.py) — `--dry-run` by default; obliterates orphan halves with `--execute --i-really-mean-it`
 - [`scripts/sliced-zip.py`](scripts/sliced-zip.py) — bisects the depot history into ≤95k-path slices and runs `p4-move-zip-fixer zip` on each

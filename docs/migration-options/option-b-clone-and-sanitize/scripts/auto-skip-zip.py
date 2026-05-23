@@ -1,56 +1,48 @@
 #!/usr/bin/env python3
-"""Auto-skip-zip — produce a sequence of `p4 zip` chunks that together cover
-the whole depot history, automatically skipping changelists whose move
-counterpart was obliterated (i.e. unrecoverable by spec widening).
+"""Auto-exclude-then-zip — produce a single `p4 zip` archive by
+automatically adding DepotMap exclusion lines for every orphan path that
+p4 zip refuses to process (because the move counterpart was obliterated).
 
-When p4-move-zip-fixer's auto-expand cannot widen the remote spec to cover
-a failing CL (because `p4 describe -s` does not see the move counterpart),
-the only safe options Perforce supports are:
+Why exclusion (not chunking)
+----------------------------
+`p4 zip` walks each file's full revision history regardless of the
+requested CL range. Narrowing `--depot //depot/...@1,#781421` does NOT
+exclude the file revision at CL 781422 if that file is in the DepotMap.
+So splitting the zip around a bad CL cannot work. The only thing that
+actually stops `p4 zip` from inspecting the orphan file is to remove it
+from the view — which is recovery option #3 in p4-move-zip-fixer's own
+guidance:
 
-  (a) clone + sanitize + obliterate the orphan path on the clone, then zip,
-  (b) split the zip into ranges that do not contain the bad CL.
+    "add explicit exclusion lines for the orphan paths to the remote
+     spec so they're excluded from view entirely."
 
-This script implements option (b) end-to-end. It is the fast / no-clone
-path. It is safe — it never writes to the source server. It only invokes
-`p4-move-zip-fixer zip` repeatedly with different `--depot` ranges and
-records which changelists were skipped.
+This script automates that. For every "Change N performs a move/X on
+//depot/...#rev" error it parses, it appends an exclusion line of the
+form ``-//depot/<path> //remote/<path>`` to the remote spec's DepotMap
+and retries `p4 zip`. It loops until p4 zip succeeds or until the same
+path would be excluded twice (which means exclusion didn't help and the
+error is something else).
+
+Read-only against source data: the only write is to the *remote spec*
+itself, which is metadata you already built with build-spec. No depot
+content is touched.
 
 USAGE
 -----
 
     python auto-skip-zip.py \\
-        --p4port illin2343:1666 \\
         --remote migration-remote \\
         --depot //depot/... \\
-        --out-dir /p4data/export/chunks \\
-        --head 817597
+        --output /p4data/export/default-depot.zip \\
+        --p4port illin2343:1666
 
 Outputs:
-    /p4data/export/chunks/chunk-001.zip
-    /p4data/export/chunks/chunk-002.zip
-    ...
-    /p4data/export/chunks/manifest.json
-    /p4data/export/chunks/skipped-cls.json
+    /p4data/export/default-depot.zip
+    /p4data/export/excluded-paths.json   (audit)
 
-Replay on the destination, in order:
+REPLAY on destination (just one zip, ordinary p4 unzip):
 
-    for z in /import/chunks/chunk-*.zip; do
-        p4 unzip -i "$z"
-    done
-
-WHAT GETS SKIPPED
------------------
-Only changelists where:
-  * p4 zip reports "performs a move/{add,delete} ... but the parameters
-    of this fetch, push, or zip command include only part of the full
-    action", AND
-  * the tool's auto-expand cannot widen the spec (counterpart obliterated
-    or otherwise invisible to `p4 describe -s`).
-
-These changelists have no recoverable content on the source side anyway:
-the move target is gone, so there is nothing the destination could
-materialise from them. The manifest records every skipped CL so you can
-audit them later (and, if needed, restore them by hand from a backup).
+    p4 -p destination:1666 unzip -i /import/default-depot.zip
 """
 from __future__ import annotations
 
@@ -63,58 +55,99 @@ from pathlib import Path
 
 # p4-move-zip-fixer emits this when it cannot widen the spec.
 _FAILED_CLS_RE = re.compile(r"failed changelist\(s\) \(\[([\d, ]+)\]\)")
-# Raw p4 zip error (first attempt, before auto-retry triggers).
-_RAW_CHANGE_RE = re.compile(r"Change\s+(\d+)\s+performs a move", re.IGNORECASE)
+# Raw p4 zip error with file path. Captures both CL and depot path.
+#   "Change 781422 performs a move/delete on //depot/.../file.jar#2,"
+_RAW_MOVE_RE = re.compile(
+    r"Change\s+(\d+)\s+performs a move/\w+\s+on\s+(//[^#\s,]+)",
+    re.IGNORECASE,
+)
 # Sentinel emitted by the tool when expand contributed 0 paths.
 _UNRECOVERABLE_RE = re.compile(r"Expand added 0 paths", re.IGNORECASE)
 
 
-def head_change(p4port: str) -> int:
+def _p4():
+    """Lazy-import P4 only when actually needed (so --help works without it)."""
     try:
         from P4 import P4
     except ImportError:
-        sys.stderr.write("p4python is required to auto-detect head CL: pip install p4python\n")
-        sys.stderr.write("Or pass --head <NNN> explicitly.\n")
+        sys.stderr.write("p4python is required: pip install p4python\n")
         sys.exit(2)
-    p4 = P4(); p4.port = p4port; p4.connect()
-    try:
-        return int(p4.run("counter", "change")[0]["value"])
-    finally:
-        p4.disconnect()
+    return P4
 
 
-def parse_bad_cls(stderr: str) -> list[int]:
-    """Return the changelist numbers that p4 zip refused to process.
+def parse_orphan_paths(stderr: str) -> list[tuple[int, str]]:
+    """Return [(changelist, depot_path), ...] from p4 zip error output.
 
-    Prefers the structured output emitted by p4-move-zip-fixer, falls
-    back to the raw `Change <N> performs a move` lines.
+    Depot paths come with the `#rev` suffix already stripped by the regex.
     """
-    cls: set[int] = set()
-    m = _FAILED_CLS_RE.search(stderr)
-    if m:
-        cls.update(int(x.strip()) for x in m.group(1).split(",") if x.strip())
-    cls.update(int(x) for x in _RAW_CHANGE_RE.findall(stderr))
-    return sorted(cls)
+    pairs = []
+    seen = set()
+    for m in _RAW_MOVE_RE.finditer(stderr):
+        cl = int(m.group(1))
+        path = m.group(2)
+        if path not in seen:
+            seen.add(path)
+            pairs.append((cl, path))
+    return pairs
 
 
 def is_unrecoverable(stderr: str) -> bool:
     return bool(_UNRECOVERABLE_RE.search(stderr))
 
 
-def try_zip_range(
-    remote: str,
-    output_path: Path,
-    depot: str,
-    start: int,
-    end: int,
-    auto_retry: int,
-) -> subprocess.CompletedProcess:
-    depot_path = f"{depot}@{start},#{end}"
+def build_exclusion_line(depot_path: str, remote_root: str = "//remote") -> str:
+    """Translate //depot/foo/bar -> '-"//depot/foo/bar" "//remote/foo/bar"'.
+
+    The depot-side has a leading '-' to mark the line as exclusion. Quoting
+    handles paths with spaces. The remote side mirrors the depot layout (we
+    strip the '//depot' prefix and graft it onto remote_root).
+    """
+    if not depot_path.startswith("//"):
+        raise ValueError(f"bad depot path: {depot_path!r}")
+    parts = depot_path.lstrip("/").split("/", 1)
+    tail = "/" + parts[1] if len(parts) > 1 else ""
+    return f'-"{depot_path}" "{remote_root}{tail}"'
+
+
+def add_exclusions_to_remote(
+    remote_name: str,
+    depot_paths: list[str],
+    remote_root: str = "//remote",
+) -> tuple[int, int]:
+    """Append exclusion lines to the remote spec's DepotMap.
+
+    Returns (added, total_after).
+    """
+    if not depot_paths:
+        return 0, 0
+    P4 = _p4()
+    p4 = P4()
+    p4.connect()
+    try:
+        spec = p4.fetch_remote(remote_name)
+        existing = list(spec.get("DepotMap") or [])
+        existing_set = set(existing)
+        new_lines = [build_exclusion_line(p, remote_root) for p in depot_paths]
+        to_add = [ln for ln in new_lines if ln not in existing_set]
+        if not to_add:
+            return 0, len(existing)
+        spec["DepotMap"] = existing + to_add
+        p4.save_remote(spec)
+        # Re-fetch to confirm persistence (server may silently truncate).
+        fresh = p4.fetch_remote(remote_name)
+        persisted = list(fresh.get("DepotMap") or [])
+        return len(to_add), len(persisted)
+    finally:
+        p4.disconnect()
+
+
+def try_zip(remote: str, output_path: Path, depot: str,
+            auto_retry: int) -> subprocess.CompletedProcess:
     cmd = [
         "p4-move-zip-fixer", "zip",
         "--remote", remote,
         "--output", str(output_path),
-        "--depot", depot_path,
+        "--depot", depot,
         "--auto-retry", str(auto_retry),
     ]
     print(f"  $ {' '.join(cmd)}")
@@ -122,59 +155,44 @@ def try_zip_range(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--p4port", default=None,
-                    help="P4PORT of the source server (only used to auto-detect --head). "
-                         "Not required if --head is passed explicitly.")
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--remote", required=True,
                     help="Remote spec name (already built by p4-move-zip-fixer build-spec).")
-    ap.add_argument("--depot", default="//depot/...",
-                    help="Depot path glob.")
-    ap.add_argument("--out-dir", required=True, type=Path,
-                    help="Directory for chunk-NNN.zip outputs and manifest.")
-    ap.add_argument("--head", type=int, default=None,
-                    help="Highest changelist to include. Default: live head from --p4port.")
-    ap.add_argument("--start", type=int, default=1,
-                    help="First changelist (default 1).")
+    ap.add_argument("--depot", default="//depot/...@1,#head",
+                    help='Depot path with range, e.g. "//depot/...@1,#head".')
+    ap.add_argument("--output", required=True, type=Path,
+                    help="Output zip path.")
+    ap.add_argument("--remote-root", default="//remote",
+                    help="Remote side prefix used in exclusion lines.")
     ap.add_argument("--auto-retry", type=int, default=5,
-                    help="Per-chunk auto-retry attempts for p4-move-zip-fixer (default 5).")
-    ap.add_argument("--max-chunks", type=int, default=1000,
-                    help="Safety stop: abort after this many chunks (default 1000).")
+                    help="Per-attempt p4-move-zip-fixer auto-retry (default 5).")
+    ap.add_argument("--max-exclusions", type=int, default=5000,
+                    help="Safety cap on how many paths to auto-exclude (default 5000).")
+    ap.add_argument("--audit", type=Path, default=None,
+                    help="Where to write the JSON audit of excluded paths. "
+                         "Defaults to <output>.excluded-paths.json")
     args = ap.parse_args()
 
-    if args.head is not None:
-        head = args.head
-    elif args.p4port:
-        head = head_change(args.p4port)
-    else:
-        sys.stderr.write("FATAL: pass either --head <NNN> or --p4port <host:port>\n")
-        return 2
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = args.out_dir / "manifest.json"
-    skipped_path = args.out_dir / "skipped-cls.json"
+    audit_path = args.audit or args.output.with_suffix(args.output.suffix + ".excluded-paths.json")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"depot     = {args.depot}")
-    print(f"range     = {args.start}..{head}")
-    print(f"remote    = {args.remote}")
-    print(f"out-dir   = {args.out_dir}")
+    excluded: list[dict] = []
+    excluded_paths_set: set[str] = set()
+    attempt = 0
+    print(f"remote   = {args.remote}")
+    print(f"depot    = {args.depot}")
+    print(f"output   = {args.output}")
+    print(f"audit    = {audit_path}")
     print()
 
-    cur = args.start
-    chunk_idx = 0
-    chunks: list[dict] = []
-    skipped: list[dict] = []
-
-    while cur <= head:
-        chunk_idx += 1
-        if chunk_idx > args.max_chunks:
-            sys.stderr.write(f"Aborting: hit --max-chunks={args.max_chunks}\n")
-            break
-
-        chunk_path = args.out_dir / f"chunk-{chunk_idx:04d}.zip"
-        print(f"=== chunk {chunk_idx}: CLs {cur}..{head}")
-        proc = try_zip_range(args.remote, chunk_path, args.depot, cur, head, args.auto_retry)
-        # Emit subprocess output for the live log.
+    while True:
+        attempt += 1
+        print(f"=== attempt {attempt}  (excluded so far: {len(excluded)})")
+        proc = try_zip(args.remote, args.output, args.depot, args.auto_retry)
         if proc.stdout:
             print(proc.stdout, end="" if proc.stdout.endswith("\n") else "\n")
         if proc.stderr:
@@ -183,114 +201,67 @@ def main() -> int:
                 sys.stderr.write("\n")
 
         if proc.returncode == 0:
-            print(f"  -> wrote {chunk_path}")
-            chunks.append({
-                "chunk": chunk_idx, "cl_start": cur, "cl_end": head,
-                "zip": chunk_path.name, "skipped_cls_in_chunk": [],
-            })
+            print(f"\nSUCCESS on attempt {attempt}.")
+            print(f"  zip      -> {args.output}")
+            print(f"  excluded -> {len(excluded)} path(s)")
             break
 
-        bad_cls = parse_bad_cls(proc.stderr)
-        unrecoverable = is_unrecoverable(proc.stderr)
-        if not bad_cls or not unrecoverable:
+        pairs = parse_orphan_paths(proc.stderr)
+        if not pairs:
             sys.stderr.write(
-                "FATAL: zip failed for a reason this script does not know how to skip.\n"
-                "       (unrecoverable=%s, bad_cls=%s)\n"
-                "       Inspect the stderr above and resolve before re-running.\n"
-                % (unrecoverable, bad_cls)
+                "FATAL: zip failed but no orphan-move path could be parsed "
+                "from the error. Inspect stderr above and resolve manually.\n"
+            )
+            return 2
+        # Only act on paths we haven't already excluded; if all of them are
+        # already excluded the exclusion didn't help and we must stop.
+        fresh_pairs = [(cl, p) for cl, p in pairs if p not in excluded_paths_set]
+        if not fresh_pairs:
+            sys.stderr.write(
+                "FATAL: every offending path is already excluded but p4 zip "
+                "still failed for the same path(s). The exclusion was not "
+                "honoured by the server (DepotMap truncated? wrong remote spec?). "
+                "Inspect with: p4 remote -o %s\n" % args.remote
             )
             return 2
 
-        bad_cl = bad_cls[0]  # The first one is where p4 zip stopped.
-        if bad_cl < cur or bad_cl > head:
-            sys.stderr.write(f"FATAL: parsed bad CL {bad_cl} is outside range {cur}..{head}\n")
+        if len(excluded) + len(fresh_pairs) > args.max_exclusions:
+            sys.stderr.write(
+                f"FATAL: would exceed --max-exclusions={args.max_exclusions}. "
+                "Re-run with a larger cap or investigate why so many orphans.\n"
+            )
             return 2
 
-        # Salvage everything before the bad CL into its own chunk.
-        if bad_cl > cur:
-            salvage_end = bad_cl - 1
-            salvage_path = args.out_dir / f"chunk-{chunk_idx:04d}.zip"
-            print(f"  --> salvaging clean prefix {cur}..{salvage_end} into {salvage_path.name}")
-            proc2 = try_zip_range(args.remote, salvage_path, args.depot,
-                                  cur, salvage_end, args.auto_retry)
-            if proc2.stdout:
-                print(proc2.stdout, end="" if proc2.stdout.endswith("\n") else "\n")
-            if proc2.stderr:
-                sys.stderr.write(proc2.stderr)
-                if not proc2.stderr.endswith("\n"):
-                    sys.stderr.write("\n")
-            if proc2.returncode != 0:
-                # A different bad CL inside [cur..salvage_end]. Walk forward.
-                inner_bad = parse_bad_cls(proc2.stderr)
-                if inner_bad and is_unrecoverable(proc2.stderr) and cur <= inner_bad[0] < salvage_end:
-                    bad_cl = inner_bad[0]
-                    print(f"  --> nested bad CL {bad_cl} found inside salvage range")
-                    salvage_end = bad_cl - 1
-                    if salvage_end >= cur:
-                        proc3 = try_zip_range(args.remote, salvage_path, args.depot,
-                                              cur, salvage_end, args.auto_retry)
-                        if proc3.returncode != 0:
-                            sys.stderr.write(
-                                f"FATAL: cannot salvage even {cur}..{salvage_end}. Aborting.\n"
-                            )
-                            return 2
-                    else:
-                        salvage_path.unlink(missing_ok=True)
-                else:
-                    sys.stderr.write(f"FATAL: cannot salvage {cur}..{salvage_end}.\n")
-                    return 2
-            if salvage_path.exists():
-                chunks.append({
-                    "chunk": chunk_idx, "cl_start": cur, "cl_end": salvage_end,
-                    "zip": salvage_path.name,
-                    "skipped_cls_in_chunk": [],
-                })
-                print(f"  -> wrote {salvage_path}")
-            chunk_idx_for_skip = chunk_idx  # for log
-        else:
-            chunk_idx -= 1  # we didn't actually create a salvage chunk
+        for cl, path in fresh_pairs:
+            print(f"  --> excluding orphan path from CL {cl}: {path}")
+            excluded.append({"cl": cl, "depot_path": path,
+                             "reason": "orphan move counterpart obliterated"})
+            excluded_paths_set.add(path)
 
-        # Record the skipped CL and advance past it.
-        print(f"  --> SKIPPING CL {bad_cl} (unrecoverable orphan move)")
-        skipped.append({
-            "cl": bad_cl,
-            "after_chunk": chunks[-1]["chunk"] if chunks else None,
-            "reason": "p4 zip auto-expand could not widen spec (counterpart obliterated)",
-        })
-        cur = bad_cl + 1
+        added, total = add_exclusions_to_remote(
+            args.remote, [p for _, p in fresh_pairs], remote_root=args.remote_root,
+        )
+        print(f"  remote spec '{args.remote}': +{added} exclusion lines "
+              f"(DepotMap total = {total})")
 
-    # Persist manifests.
-    # We expose the chunks under both keys so sliced-unzip.py works unchanged:
-    #   - "chunks" is the native auto-skip shape (includes skipped_cls_in_chunk)
-    #   - "slices" mirrors sliced-zip.py's manifest so the same replay tool
-    #     (sliced-unzip.py) can drive it on the destination.
-    slices_view = [
-        {"slice": c["chunk"], "cl_start": c["cl_start"], "cl_end": c["cl_end"],
-         "paths": None, "zip": c["zip"], "remote": args.remote}
-        for c in chunks
-    ]
-    manifest = {
-        "depot": args.depot,
-        "head": head,
-        "start": args.start,
-        "remote": args.remote,
-        "chunk_count": len(chunks),
-        "skipped_count": len(skipped),
-        "chunks": chunks,
-        "slices": slices_view,
-    }
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    skipped_path.write_text(json.dumps(skipped, indent=2), encoding="utf-8")
+        if added == 0:
+            sys.stderr.write(
+                "FATAL: spec update reported +0 lines persisted — the server "
+                "may have refused or truncated the update.\n"
+            )
+            return 2
 
-    print()
-    print(f"Done. chunks={len(chunks)}  skipped_cls={len(skipped)}")
-    print(f"  manifest -> {manifest_path}")
-    print(f"  skipped  -> {skipped_path}")
-    if skipped:
-        print()
-        print("Skipped changelists (audit these against a backup if you need their content):")
-        for s in skipped:
-            print(f"  CL {s['cl']}  ({s['reason']})")
+        # Persist audit on every iteration so a crash still leaves a trail.
+        audit_path.write_text(
+            json.dumps({"excluded_count": len(excluded), "excluded": excluded}, indent=2),
+            encoding="utf-8",
+        )
+
+    # Final audit write.
+    audit_path.write_text(
+        json.dumps({"excluded_count": len(excluded), "excluded": excluded}, indent=2),
+        encoding="utf-8",
+    )
     return 0
 
 
