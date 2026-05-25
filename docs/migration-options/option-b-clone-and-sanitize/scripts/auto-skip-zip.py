@@ -96,17 +96,27 @@ def is_unrecoverable(stderr: str) -> bool:
 
 
 def build_exclusion_line(depot_path: str, remote_root: str = "//remote") -> str:
-    """Translate //depot/foo/bar -> '-"//depot/foo/bar" "//remote/foo/bar"'.
+    """Translate //depot/foo/bar -> '"-//depot/foo/bar" "//remote/foo/bar"'.
 
-    The depot-side has a leading '-' to mark the line as exclusion. Quoting
-    handles paths with spaces. The remote side mirrors the depot layout (we
-    strip the '//depot' prefix and graft it onto remote_root).
+    The depot-side has a leading '-' to mark the line as exclusion. The '-'
+    MUST go INSIDE the quotes — Perforce's spec parser, when a line starts
+    with '-', stays in unquoted-token mode and reads the following '"' as a
+    literal character of the depot path, producing errors like:
+
+        Error in remote specification.
+        Null directory (//) not allowed in '"//depot/.../file.jar"'.
+
+    Putting the '-' inside the quotes (`"-//depot/path"`) is the canonical
+    Perforce form and tokenises correctly regardless of whether the path
+    needs quoting. Quoting handles paths with spaces or other special
+    characters. The remote side mirrors the depot layout (we strip the
+    '//depot' prefix and graft it onto remote_root).
     """
     if not depot_path.startswith("//"):
         raise ValueError(f"bad depot path: {depot_path!r}")
     parts = depot_path.lstrip("/").split("/", 1)
     tail = "/" + parts[1] if len(parts) > 1 else ""
-    return f'-"{depot_path}" "{remote_root}{tail}"'
+    return f'"-{depot_path}" "{remote_root}{tail}"'
 
 
 def add_exclusions_to_remote(
