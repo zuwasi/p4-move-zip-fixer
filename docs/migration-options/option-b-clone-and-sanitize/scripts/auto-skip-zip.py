@@ -119,6 +119,39 @@ def build_exclusion_line(depot_path: str, remote_root: str = "//remote") -> str:
     return f'"-{depot_path}" "{remote_root}{tail}"'
 
 
+def _is_exclusion_line(line: str) -> bool:
+    """True if this DepotMap line is an exclusion (depot-side starts with '-').
+
+    Recognises both the canonical quoted form `"-//depot/..."` and the
+    unquoted form `-//depot/...`. Defensive against leading whitespace.
+    """
+    s = (line or "").lstrip()
+    return s.startswith('"-') or s.startswith("-//")
+
+
+def _split_catchall_and_exclusions(lines: list[str]) -> tuple[str | None, list[str]]:
+    """Return (catchall_line, [exclusion_lines]) from an existing DepotMap.
+
+    The catch-all is the first non-exclusion line (typically
+    ``//depot/... //remote/...``). All per-file inclusion lines that aren't
+    the catch-all are dropped during a compact rebuild — they're redundant
+    given the catch-all already covers every depot path. Exclusion lines
+    are preserved because they actively remove paths from view.
+    """
+    catchall: str | None = None
+    exclusions: list[str] = []
+    for line in lines:
+        stripped = line.strip() if line else ""
+        if not stripped:
+            continue
+        if _is_exclusion_line(stripped):
+            exclusions.append(stripped)
+        elif catchall is None:
+            catchall = stripped
+        # else: redundant per-file inclusion — drop it on compact rebuild.
+    return catchall, exclusions
+
+
 def add_exclusions_to_remote(
     remote_name: str,
     depot_paths: list[str],
@@ -126,7 +159,15 @@ def add_exclusions_to_remote(
 ) -> tuple[int, int]:
     """Append exclusion lines to the remote spec's DepotMap.
 
-    Returns (added, total_after).
+    Returns ``(actually_added, total_after)`` — note that ``actually_added``
+    is the **delta in persisted DepotMap length**, not the intended add
+    count. When the spec is at Perforce's 100k DepotMap cap the server
+    silently drops new entries; the additive write reports zero growth and
+    we transparently switch to a **compact rebuild**: replace the spec
+    with ``[catch-all] + [existing exclusions] + [new exclusions]``,
+    dropping all redundant per-file inclusion lines that the catch-all
+    already covers. This frees the room needed for the new exclusions
+    without changing what the spec includes in view.
     """
     if not depot_paths:
         return 0, 0
@@ -141,12 +182,40 @@ def add_exclusions_to_remote(
         to_add = [ln for ln in new_lines if ln not in existing_set]
         if not to_add:
             return 0, len(existing)
+
+        # First try: simple append.
         spec["DepotMap"] = existing + to_add
         p4.save_remote(spec)
-        # Re-fetch to confirm persistence (server may silently truncate).
         fresh = p4.fetch_remote(remote_name)
         persisted = list(fresh.get("DepotMap") or [])
-        return len(to_add), len(persisted)
+        actual_delta = len(persisted) - len(existing)
+
+        if actual_delta >= len(to_add):
+            return actual_delta, len(persisted)
+
+        # Server silently truncated (DepotMap is at the 100k cap). Rebuild
+        # compactly: catch-all + every exclusion (existing + new), dropping
+        # the redundant per-file inclusion lines.
+        catchall, prior_excl = _split_catchall_and_exclusions(persisted)
+        if catchall is None:
+            # No catch-all found — fall back to the conventional default
+            # so the spec still covers the depot.
+            catchall = f"//depot/... {remote_root}/..."
+
+        prior_excl_set = set(prior_excl)
+        compact = [catchall] + prior_excl + [ln for ln in to_add if ln not in prior_excl_set]
+
+        spec = p4.fetch_remote(remote_name)
+        spec["DepotMap"] = compact
+        p4.save_remote(spec)
+        fresh2 = p4.fetch_remote(remote_name)
+        persisted2 = list(fresh2.get("DepotMap") or [])
+
+        # Real growth is the count of new exclusions now in the spec versus
+        # the *original* existing set (so the caller can see whether the
+        # compact rebuild actually delivered the requested additions).
+        truly_added = sum(1 for ln in to_add if ln in set(persisted2))
+        return truly_added, len(persisted2)
     finally:
         p4.disconnect()
 
