@@ -96,27 +96,38 @@ def is_unrecoverable(stderr: str) -> bool:
 
 
 def build_exclusion_line(depot_path: str, remote_root: str = "//remote") -> str:
-    """Translate //depot/foo/bar -> '"-//depot/foo/bar" "//remote/foo/bar"'.
+    """Translate //depot/foo/bar -> '-//depot/foo/bar //remote/foo/bar'.
 
-    The depot-side has a leading '-' to mark the line as exclusion. The '-'
-    MUST go INSIDE the quotes — Perforce's spec parser, when a line starts
-    with '-', stays in unquoted-token mode and reads the following '"' as a
-    literal character of the depot path, producing errors like:
+    Emits the canonical *unquoted* exclusion form documented by Helix Core:
 
-        Error in remote specification.
-        Null directory (//) not allowed in '"//depot/.../file.jar"'.
+        https://help.perforce.com/helix-core/server-apps/p4sag/current/Content/DVCS/remotes.mappings.exclude.html
 
-    Putting the '-' inside the quotes (`"-//depot/path"`) is the canonical
-    Perforce form and tokenises correctly regardless of whether the path
-    needs quoting. Quoting handles paths with spaces or other special
-    characters. The remote side mirrors the depot layout (we strip the
-    '//depot' prefix and graft it onto remote_root).
+    quoting the rule: "To exclude a file or directory, precede the mapping
+    with a minus sign (-). Whitespace is not allowed between the minus
+    sign and the mapping."
+
+    Earlier versions of this script emitted a quoted form (`"-//depot/..."
+    "//remote/..."`). That form *parses*, but the server was observed to
+    silently drop quoted exclusion lines from a remote spec's DepotMap on
+    save (verified against the field log where the line was reported as
+    "added" yet `p4 zip` re-hit the same path). The docs only show the
+    unquoted canonical form, so we mirror it exactly.
+
+    Paths containing whitespace would need quoting, but depot paths in
+    practice (and the failing paths in the field report) do not contain
+    spaces. If a future path does, we'll surface a clear error rather
+    than emit a form Perforce may silently mis-parse.
     """
     if not depot_path.startswith("//"):
         raise ValueError(f"bad depot path: {depot_path!r}")
+    if any(c.isspace() for c in depot_path):
+        raise ValueError(
+            f"depot path contains whitespace; unquoted exclusion form "
+            f"cannot represent it safely: {depot_path!r}"
+        )
     parts = depot_path.lstrip("/").split("/", 1)
     tail = "/" + parts[1] if len(parts) > 1 else ""
-    return f'"-{depot_path}" "{remote_root}{tail}"'
+    return f"-{depot_path} {remote_root}{tail}"
 
 
 def _is_exclusion_line(line: str) -> bool:

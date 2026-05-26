@@ -30,43 +30,53 @@ def auto_skip_zip():
     return _load()
 
 
-def test_build_exclusion_line_puts_dash_inside_quotes(auto_skip_zip):
-    """The '-' must be INSIDE the leading double-quote, not outside.
+def test_build_exclusion_line_emits_canonical_unquoted_form(auto_skip_zip):
+    """Emit the documented Helix Core canonical form: '-<depot> <remote>'.
 
-    When the '-' is outside ('-"//depot/..."'), Perforce parses the line
-    in unquoted mode, reads the '"' as a literal character of the depot
-    path, and rejects the spec with:
-        Error in remote specification.
-        Null directory (//) not allowed in '"//depot/.../file.jar"'.
+    Reference:
+      https://help.perforce.com/helix-core/server-apps/p4sag/current/Content/DVCS/remotes.mappings.exclude.html
+      "To exclude a file or directory, precede the mapping with a minus
+      sign (-). Whitespace is not allowed between the minus sign and the
+      mapping."
 
-    The canonical Perforce form is '"-//depot/path" "//remote/path"'.
+    A previous iteration of this script wrapped the depot side in double
+    quotes (`"-//depot/..."`). That parsed but the server was observed
+    to silently drop the quoted exclusion when persisting the remote
+    spec, leaving `p4 zip` to fail on the same path. Mirroring the doc
+    example exactly avoids that ambiguity.
     """
     line = auto_skip_zip.build_exclusion_line(
         "//depot/Advocacy/HF/FoundationJarsForSigning-SHA2/700001-070417/"
         "AmdocsCRM-BM-Collection__V8_1_2_5_1.jar"
     )
     assert line == (
-        '"-//depot/Advocacy/HF/FoundationJarsForSigning-SHA2/700001-070417/'
-        'AmdocsCRM-BM-Collection__V8_1_2_5_1.jar" '
-        '"//remote/Advocacy/HF/FoundationJarsForSigning-SHA2/700001-070417/'
-        'AmdocsCRM-BM-Collection__V8_1_2_5_1.jar"'
+        "-//depot/Advocacy/HF/FoundationJarsForSigning-SHA2/700001-070417/"
+        "AmdocsCRM-BM-Collection__V8_1_2_5_1.jar "
+        "//remote/Advocacy/HF/FoundationJarsForSigning-SHA2/700001-070417/"
+        "AmdocsCRM-BM-Collection__V8_1_2_5_1.jar"
     )
-    # The leading character of the entire line must be a double-quote, not
-    # a dash — that's the whole point.
-    assert line.startswith('"-')
-    assert not line.startswith('-"')
+    # Leading char must be '-' immediately followed by '//' (no quote, no
+    # whitespace) — that's the documented rule.
+    assert line.startswith("-//")
+    assert '"' not in line
 
 
 def test_build_exclusion_line_uses_custom_remote_root(auto_skip_zip):
     line = auto_skip_zip.build_exclusion_line(
         "//depot/foo/bar.txt", remote_root="//mirror"
     )
-    assert line == '"-//depot/foo/bar.txt" "//mirror/foo/bar.txt"'
+    assert line == "-//depot/foo/bar.txt //mirror/foo/bar.txt"
 
 
 def test_build_exclusion_line_rejects_non_depot_paths(auto_skip_zip):
     with pytest.raises(ValueError):
         auto_skip_zip.build_exclusion_line("relative/path")
+
+
+def test_build_exclusion_line_rejects_paths_with_whitespace(auto_skip_zip):
+    """Unquoted form cannot safely represent paths with whitespace."""
+    with pytest.raises(ValueError):
+        auto_skip_zip.build_exclusion_line("//depot/foo bar/baz.jar")
 
 
 def test_parse_orphan_paths_extracts_cl_and_path(auto_skip_zip):
@@ -103,25 +113,25 @@ def test_split_catchall_drops_redundant_per_file_inclusions(auto_skip_zip):
     drop all the redundant per-file inclusion lines that the catch-all
     already covers — that's how we free space under Perforce's 100k cap."""
     lines = [
-        "//depot/... //remote/...",                          # catch-all (keep)
-        '"//depot/foo/a.c" "//remote/foo/a.c"',              # per-file (drop)
-        '"//depot/foo/b.c" "//remote/foo/b.c"',              # per-file (drop)
-        '"-//depot/bad/orphan.jar" "//remote/bad/orphan.jar"',  # exclusion (keep)
-        '"//depot/foo/c.c" "//remote/foo/c.c"',              # per-file (drop)
+        "//depot/... //remote/...",                            # catch-all (keep)
+        '"//depot/foo/a.c" "//remote/foo/a.c"',                # per-file (drop)
+        '"//depot/foo/b.c" "//remote/foo/b.c"',                # per-file (drop)
+        "-//depot/bad/orphan.jar //remote/bad/orphan.jar",     # exclusion (keep)
+        '"//depot/foo/c.c" "//remote/foo/c.c"',                # per-file (drop)
     ]
     catchall, exclusions = auto_skip_zip._split_catchall_and_exclusions(lines)
     assert catchall == "//depot/... //remote/..."
-    assert exclusions == ['"-//depot/bad/orphan.jar" "//remote/bad/orphan.jar"']
+    assert exclusions == ["-//depot/bad/orphan.jar //remote/bad/orphan.jar"]
 
 
 def test_split_catchall_handles_missing_catchall(auto_skip_zip):
     catchall, exclusions = auto_skip_zip._split_catchall_and_exclusions([
-        '"-//depot/a" "//remote/a"',
-        '"-//depot/b" "//remote/b"',
+        "-//depot/a //remote/a",
+        "-//depot/b //remote/b",
     ])
     assert catchall is None
-    assert exclusions == ['"-//depot/a" "//remote/a"',
-                         '"-//depot/b" "//remote/b"']
+    assert exclusions == ["-//depot/a //remote/a",
+                         "-//depot/b //remote/b"]
 
 
 def test_split_catchall_ignores_blank_lines(auto_skip_zip):
